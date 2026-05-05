@@ -3,10 +3,13 @@ see the `Gymnasium environment creation tutorial` at the link:
 https://gymnasium.farama.org/tutorials/gymnasium_basics/environment_creation
 """
 
+import argparse
+import json
 import logging
 from copy import deepcopy
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -16,9 +19,9 @@ from gymnasium import spaces
 import torch
 
 from skymonitor.simbarca_explore import SimBarcaExplore, initialize_dataset
-from skymonitor.agents import BaseAgent, RandomAgent, StaticAgent, SweepingAgent, DroneAction, ActionToDirection
+from skymonitor.agents import BaseAgent, RandomAgent, StaticAgent, DroneAction, ActionToDirection
 from skymonitor.congestion import get_congestion_score, get_congestion_change
-from skymonitor.visualize import animate_trajectory
+from skymonitor.mfd_reward import calculate_mfd_metrics
 from skytraffic.utils.structure import build_grid_xy_to_id
 
 logger = logging.getLogger(__name__)
@@ -28,6 +31,7 @@ logger = logging.getLogger(__name__)
 class TrafficData:
 	flow: np.ndarray = None # shape (num_sessions, num_time_steps, num_positions)
 	density: np.ndarray = None # shape (num_sessions, num_time_steps, num_positions)
+	segment_lengths: np.ndarray = None # shape (num_positions, )
 	time_in_day: np.ndarray = None # shape (num_time_steps, )
 	state: np.ndarray = None # shape (num_sessions, num_time_steps, num_positions)
 	score: np.ndarray = None # shape (num_sessions, num_time_steps, num_positions)
@@ -142,6 +146,7 @@ class TrafficMonitorEnv(gym.Env):
 		fixed_init_pos: List[Tuple[int, int]] = None,
 		obs_normalizer: ObservationNormalizer = None,
 		add_historical_avg: bool = True,
+		reward_type: str = 'congestion',
 		seed: int = None,
 	):
 		super().__init__()
@@ -158,6 +163,7 @@ class TrafficMonitorEnv(gym.Env):
 		self.fixed_init_pos = fixed_init_pos
 		self.obs_normalizer = obs_normalizer
 		self.add_historical_avg = add_historical_avg
+		self.reward_type = reward_type
 
 		# spaces of the environment
 		self.action_space = spaces.MultiDiscrete([len(DroneAction)] * num_drones)
@@ -262,13 +268,15 @@ class TrafficMonitorEnv(gym.Env):
 		obs = self.get_observations(pos)
 
 		# the reward is calculated based on the current observation
-		reward_value = self.calculate_reward(obs)
+		step_metrics = self.calculate_step_metrics(obs)
+		reward_value = step_metrics['reward']
 
 		terminated_flag = self.step_index >= (self.total_steps - 1)
 		truncated_flag = False
 
 		self.update_history(pos, obs)
 		info = self.get_info()
+		info['step_metrics'] = step_metrics
 
 		return obs, reward_value, terminated_flag, truncated_flag, info
 
@@ -306,13 +314,72 @@ class TrafficMonitorEnv(gym.Env):
 
 	def calculate_reward(self, observation: Dict[str, np.ndarray]) -> float:
 		"""Define the reward based on the current observation."""
+		return self.calculate_step_metrics(observation)['reward']
+
+	def calculate_step_metrics(self, observation: Dict[str, np.ndarray]) -> Dict[str, float]:
+		"""Compute reward and reportable physical metrics for the current step."""
 		coverage = observation['coverage_mask'].astype(np.float32)
+		if self.reward_type == 'mfd':
+			return calculate_mfd_metrics(
+				flow=self.traffic_data.flow[self.active_session, self.step_index, :],
+				density=self.traffic_data.density[self.active_session, self.step_index, :],
+				segment_lengths=self.traffic_data.segment_lengths,
+				coverage_mask=coverage,
+			)
+
 		enters = self.traffic_data.enters[self.active_session, self.step_index, :].astype(np.float32)
 		exits = self.traffic_data.exits[self.active_session, self.step_index, :].astype(np.float32)
-		covered_enters = (self.avg_flow_by_location * coverage * enters).sum()
-		covered_exits = (self.avg_flow_by_location * coverage * exits).sum()
+		congestion_change = enters + exits
+		covered_congestion_change = (coverage * congestion_change).sum()
+		total_congestion_change = congestion_change.sum()
+		reward = (self.avg_flow_by_location * coverage * congestion_change).sum()
 
-		return float((covered_enters + covered_exits).item())
+		return {
+			'covered_congestion_change': float(covered_congestion_change.item()),
+			'total_congestion_change': float(total_congestion_change.item()),
+			'reward': float(reward.item()),
+		}
+
+	def get_step_metric_reducers(self) -> Dict[str, str]:
+		if self.reward_type == 'mfd':
+			return {
+				'mfd_flow_true': 'mean',
+				'mfd_flow_estimate': 'mean',
+				'mfd_flow_abs_error': 'mean',
+				'mfd_flow_rel_error': 'mean',
+				'mfd_density_true': 'mean',
+				'mfd_density_estimate': 'mean',
+				'mfd_density_abs_error': 'mean',
+				'mfd_density_rel_error': 'mean',
+				'mfd_error': 'mean',
+				'reward': 'sum',
+			}
+
+		return {
+			'covered_congestion_change': 'sum',
+			'total_congestion_change': 'sum',
+			'reward': 'sum',
+		}
+
+	def aggregate_step_metrics(self, step_metrics: Dict[str, List[float]]) -> Dict[str, float]:
+		reducers = self.get_step_metric_reducers()
+		episode_metrics = {}
+		for key, values in step_metrics.items():
+			values = np.asarray(values, dtype=np.float64)
+			if reducers[key] == 'sum':
+				episode_metrics[key] = float(values.sum())
+			elif reducers[key] == 'mean':
+				episode_metrics[key] = float(values.mean())
+			else:
+				raise ValueError(f"Invalid reducer {reducers[key]} for metric {key}.")
+
+		if 'covered_congestion_change' in episode_metrics and 'total_congestion_change' in episode_metrics:
+			total_change = episode_metrics['total_congestion_change']
+			episode_metrics['congestion_change_coverage_rate'] = (
+				episode_metrics['covered_congestion_change'] / total_change if total_change > 0 else 0.0
+			)
+
+		return episode_metrics
 
 	def init_agent_positions(self):
 		"""Initialize drone positions at start of episode."""
@@ -462,6 +529,7 @@ def prepare_env_data_structure(
 	traffic_data = TrafficData(
 		flow=flow,
 		density=density,
+		segment_lengths=dataset.segment_lengths,
 		time_in_day=dataset.time_in_day_3min,
 		state=state,
 		score=congestion_score,
@@ -485,6 +553,7 @@ def build_traffic_monitor_env(
 	num_drones: int = 5,
 	env_type: str = 'train',
 	norm_obs: bool = True,
+	reward_type: str = 'congestion',
 ) -> Tuple[TrafficMonitorEnv, Optional[TrafficMonitorEnv]]:
 	"""
 	Build the traffic monitoring envs.
@@ -495,6 +564,7 @@ def build_traffic_monitor_env(
 		num_drones (int): number of drones
 		env_type (str, optional): type of environment to build. One of 'train', 'test', or 'both'. Defaults to 'train'.
 		norm_obs (bool, optional): whether to normalize observations. Defaults to True.
+		reward_type (str, optional): reward definition. One of 'congestion' or 'mfd'. Defaults to 'congestion'.
 	Returns:
 		Tuple[TrafficMonitorEnv, Optional[TrafficMonitorEnv]]: train and test environments
 	"""
@@ -512,6 +582,7 @@ def build_traffic_monitor_env(
 		map_structure=train_map_structure,
 		obs_normalizer=normalizer if norm_obs else None,
 		num_drones=num_drones,
+		reward_type=reward_type,
 	)
 
 	# if requested, build the test environment
@@ -522,6 +593,7 @@ def build_traffic_monitor_env(
 			map_structure=test_map_structure,
 			obs_normalizer=normalizer if norm_obs else None,
 			num_drones=num_drones,
+			reward_type=reward_type,
 		)
 
 	if env_type == 'train':
@@ -537,7 +609,11 @@ def eval_on_all_sessions(env: TrafficMonitorEnv, agent: BaseAgent, seed: int = 4
 	# seed the environment once before the loop to initialize its random number generator.
 	# in this way the drones are randomly spawn for each session, but remains consistent across runs
 	env.reset(seed=seed)  
-	eval_res = defaultdict(list)
+	eval_res = {
+		'all_reward': [],
+		'all_metrics': defaultdict(list),
+		'all_trajectories': [],
+	}
 
 	for active_session in range(env.total_sessions):
 		# print('=== Running agents on session {} ==='.format(active_session))
@@ -557,15 +633,126 @@ def eval_on_all_sessions(env: TrafficMonitorEnv, agent: BaseAgent, seed: int = 4
 		done = False
 		truncated = False
 		episode_reward = 0.0
+		episode_step_metrics = defaultdict(list)
 		while not (done or truncated):
 			actions = agent.select_action(observation)
 			observation, reward, done, truncated, info = env.step(actions)
 			episode_reward += reward
+			for key, value in info['step_metrics'].items():
+				episode_step_metrics[key].append(float(value))
 
 		eval_res['all_reward'].append(episode_reward)
+		episode_metrics = env.aggregate_step_metrics(episode_step_metrics)
+		for key, value in episode_metrics.items():
+			if key != 'reward':
+				eval_res['all_metrics'][key].append(value)
 		eval_res['all_trajectories'].append([pos for pos in env.positions_history])
 
 	return eval_res
+
+
+def build_trivial_monitoring_agent(agent_type: str, num_drones: int) -> BaseAgent:
+	if agent_type == 'random':
+		return RandomAgent(num_drones=num_drones)
+	if agent_type == 'static':
+		return StaticAgent(num_drones=num_drones)
+	raise ValueError(f"Invalid trivial agent type: {agent_type}. Must be 'random' or 'static'.")
+
+
+def eval_agent_repeats(
+	env: TrafficMonitorEnv,
+	agent: BaseAgent,
+	eval_repeat: int,
+	eval_seed: int,
+) -> Tuple[Dict, np.ndarray, Dict[str, np.ndarray], List]:
+	res_reps = defaultdict(list)
+	metric_reps = defaultdict(list)
+	rng = np.random.default_rng(eval_seed)
+	seeds = rng.choice(10000, size=eval_repeat, replace=False)
+	for seed in seeds:
+		eval_res = eval_on_all_sessions(env, agent, seed=int(seed))
+		res_reps['reward'].append(eval_res['all_reward'])
+		for key, values in eval_res['all_metrics'].items():
+			metric_reps[key].append(values)
+		res_reps['trajectories'].append(eval_res['all_trajectories'])
+
+	reward_reps = np.array(res_reps['reward'])
+	metric_reps = {key: np.array(values) for key, values in metric_reps.items()}
+	stats = {
+		'avg_reward': float(reward_reps.mean(axis=1).mean()),
+		'std_reward': float(reward_reps.mean(axis=1).std()),
+		'avg_reward_per_session': reward_reps.mean(axis=0).tolist(),
+		'std_reward_per_session': reward_reps.std(axis=0).tolist(),
+	}
+	for key, values in metric_reps.items():
+		stats[f'avg_{key}'] = float(values.mean(axis=1).mean())
+		stats[f'std_{key}'] = float(values.mean(axis=1).std())
+		stats[f'avg_{key}_per_session'] = values.mean(axis=0).tolist()
+		stats[f'std_{key}_per_session'] = values.std(axis=0).tolist()
+
+	return stats, reward_reps, metric_reps, res_reps['trajectories']
+
+
+def evaluate_trivial_monitoring_agent(
+	agent_type: str,
+	num_drones: int,
+	log_dir: str,
+	eval_repeat: int,
+	eval_seed: int,
+	norm_obs: bool = True,
+	reward_type: str = 'congestion',
+) -> Dict:
+	log_path = Path(log_dir)
+	log_path.mkdir(parents=True, exist_ok=True)
+
+	trainset, testset = initialize_dataset()
+	env: TrafficMonitorEnv = build_traffic_monitor_env(
+		trainset=trainset,
+		testset=testset,
+		num_drones=num_drones,
+		env_type='test',
+		norm_obs=norm_obs,
+		reward_type=reward_type,
+	)
+	agent = build_trivial_monitoring_agent(agent_type, num_drones=num_drones)
+
+	stats, reward_reps, metric_reps, trajectories = eval_agent_repeats(
+		env=env,
+		agent=agent,
+		eval_repeat=eval_repeat,
+		eval_seed=eval_seed,
+	)
+	logger.info('Drone Monitoring Evaluation Results: {}'.format(stats))
+
+	save_path = log_path / 'rep{}x_results.json'.format(eval_repeat)
+	with save_path.open('w') as f:
+		json.dump(
+			{
+				'stats': stats,
+				'reward_all_repeats': reward_reps.tolist(),
+				'metrics_all_repeats': {key: values.tolist() for key, values in metric_reps.items()},
+				'trajectories_all_repeats': trajectories,
+			},
+			f,
+			indent=4,
+		)
+
+	from skymonitor.visualize import animate_trajectory
+
+	logger.info("Visualizeing the trajectories of some evaluation runs and sessions.")
+	for rep, all_traj in enumerate(trajectories):
+		if not rep % 5 == 0:
+			continue
+		for session_id, traj in enumerate(all_traj):
+			if session_id % 20 == 0:
+				animate_trajectory(
+					grid_xy=env.map_structure.grid_xy_of_nodes,
+					trajectory=traj,
+					save_path=log_path / f'traj_rep{rep}_session{session_id}.gif',
+				)
+
+	env.close()
+	return stats
 
 
 def get_high_reward_pos(traffic_data, map_structure, k: int = 10, return_reward: bool = False) -> List[Tuple[int, int]]:
@@ -602,15 +789,11 @@ def get_high_reward_pos(traffic_data, map_structure, k: int = 10, return_reward:
 	else:
 		return positions
 
+def visualize_env_data():
 
-
-if __name__ == '__main__':
-	from skytraffic.utils.event_logger import setup_logger
 	from stable_baselines3.common.env_checker import check_env
 	from gymnasium.utils.env_checker import check_env as gym_check_env
-	from skymonitor.visualize import visualize_data_as_grid, FIGURE_DIR
-
-	logger = setup_logger(name='skymonitor', level=logging.INFO)
+	from skymonitor.visualize import visualize_data_as_grid
 
 	num_drones = 10
 	trainset, testset = initialize_dataset()
@@ -644,70 +827,37 @@ if __name__ == '__main__':
 	except Exception as e:
 		print(f"Environment has issues: {e}")
 
-	logger.info("Running example trajectories with different agents in TRAIN environment...")
-	for agent_class in [StaticAgent, RandomAgent]:
-		agent = agent_class(num_drones=num_drones)
 
-		observation, info = train_env.reset()
-		logger.info('Initial observation keys:{}'.format(observation.keys()))
-		logger.info('Initial coverage ratio: {}'.format(observation['coverage_mask'].mean()))
-		terminated = False
-		while not terminated:
-			obs, reward_value, terminated, _, info = train_env.step(agent.select_action(observation))  # test step
-			if train_env.obs_normalizer is not None:
-				obs = train_env.obs_normalizer.scale_back(obs)
+if __name__ == '__main__':
+	from skytraffic.utils.event_logger import setup_logger
+	from skytraffic.utils.io import make_dir_if_not_exist
 
-			logger.info(
-				'Step:{} Reward:{:.4f} Flow:{:.4f} Density:{:.4f} TimeInDay:{:.4f} Coverage:{:.4f}'.format(
-					info['step_index'],
-					reward_value,
-					obs['flow'].mean(),
-					obs['density'].mean(),
-					obs['time_in_day'].mean(),
-					obs['coverage_mask'].mean(),
-				)
-			)
-		
-		animate_trajectory(
-			grid_xy=train_env.map_structure.grid_xy_of_nodes,
-			trajectory=train_env.positions_history,
-			save_path=f"{FIGURE_DIR}/example_traj_{agent_class.__name__}.gif",
+
+	parser = argparse.ArgumentParser(description='Build and evaluate the traffic monitoring environment.')
+	parser.add_argument('--agent-type', type=str, default='random', choices=['random', 'static'], help='Evaluate a trivial baseline agent and exit.')
+	parser.add_argument('--num-drones', type=int, default=10, help='Number of drones used for trivial-agent evaluation.')
+	parser.add_argument('--logdir', type=str, default='scratch/drone_monitor_env', help='Directory to store evaluation logs and outputs.')
+	parser.add_argument('--log-level', type=str, default='info', choices=['debug', 'info', 'warning', 'error', 'critical'])
+	parser.add_argument('--eval-repeat', type=int, default=5, help='Number of evaluation runs.')
+	parser.add_argument('--eval-seed', type=int, default=888, help='Seed for the evaluation environment.')
+	parser.add_argument('--norm-obs', action=argparse.BooleanOptionalAction, default=True, help='Normalize observations.')
+	parser.add_argument('--reward-type', type=str, default='congestion', choices=['congestion', 'mfd'], help='Reward definition for evaluation.')
+	args = parser.parse_args()
+
+	make_dir_if_not_exist(args.logdir)
+	logger = setup_logger(
+		name='skymonitor',
+		log_file='{}/experiment.log'.format(args.logdir),
+		level=getattr(logging, args.log_level.upper()),
+	)
+	logger.info('Arguments: {}'.format(args))
+
+	evaluate_trivial_monitoring_agent(
+			agent_type=args.agent_type,
+			num_drones=args.num_drones,
+			log_dir=args.logdir,
+			eval_repeat=args.eval_repeat,
+			eval_seed=args.eval_seed,
+			norm_obs=args.norm_obs,
+			reward_type=args.reward_type,
 		)
-
-	# evaluate a baseline agent: static agent staying on the high-reward positions
-	hr_pos, hr_rewards = get_high_reward_pos(train_env.traffic_data, train_env.map_structure, k=10, return_reward=True)
-	logger.info("Top-10 high reward positions in TRAIN env: {} ".format(hr_pos))
-	logger.info("Avg rewards per session: {:.2f}".format(np.sum(hr_rewards)/train_env.total_sessions))
-
-	logger.info("Checking the total reward using the TEST environment with static agents at high-reward positions...")
-	agent = StaticAgent(num_drones=num_drones)
-	eval_res = eval_on_all_sessions(
-		env=test_env,
-		agent=agent,
-		seed=888,
-		init_pos=hr_pos,
-	)
-	logger.info("Avg reward over all sessions {}".format(sum(eval_res['all_reward'])/test_env.total_sessions))
-
-	# another baseline sweeping agents
-	logger.info("Checking the total reward using the TEST environment with sweeping agents...")
-	agent = SweepingAgent(num_drones=num_drones, sweeping_pos=test_env.all_positions)
-	eval_res = eval_on_all_sessions(
-		env=test_env,
-		agent=agent,
-		seed=888,
-		init_pos=[agent.trajectory_plan[agent_id][0] for agent_id in range(num_drones)],
-	)
-	logger.info("Avg reward over all sessions {}".format(sum(eval_res['all_reward'])/test_env.total_sessions))
-	animate_trajectory(
-		grid_xy=test_env.map_structure.grid_xy_of_nodes,
-		trajectory=eval_res['all_trajectories'][0],
-		save_path=f"{FIGURE_DIR}/sweeping_agent_test_env_0.gif",
-	)
-	animate_trajectory(
-		grid_xy=test_env.map_structure.grid_xy_of_nodes,
-		trajectory=eval_res['all_trajectories'][15],
-		save_path=f"{FIGURE_DIR}/sweeping_agent_test_env_15.gif",
-	)
-
-	logger.info("Evaluating Random Agent on TEST environment...")
