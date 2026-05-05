@@ -19,7 +19,14 @@ from gymnasium import spaces
 import torch
 
 from skymonitor.simbarca_explore import SimBarcaExplore, initialize_dataset
-from skymonitor.agents import BaseAgent, RandomAgent, StaticAgent, DroneAction, ActionToDirection
+from skymonitor.agents import (
+	BaseAgent,
+	RandomAgent,
+	StaticAgent,
+	SweepingAgent,
+	DroneAction,
+	ActionToDirection,
+)
 from skymonitor.congestion import get_congestion_score, get_congestion_change
 from skymonitor.mfd_reward import calculate_mfd_metrics
 from skytraffic.utils.structure import build_grid_xy_to_id
@@ -605,7 +612,44 @@ def build_traffic_monitor_env(
 	else:
 		raise ValueError(f"Invalid envs argument: {env_type}. Must be 'train', 'test' or 'both'.")
 
-def eval_on_all_sessions(env: TrafficMonitorEnv, agent: BaseAgent, seed: int = 42, init_pos: List[Tuple[int, int]] = None) -> Dict[str, List]:
+@dataclass(frozen=True)
+class _EvalInitState:
+	positions: List[Tuple[int, int]]
+	sweeping_progress: List[int]
+
+
+def _build_sweeping_eval_init_state(
+	agent: SweepingAgent,
+	rng: np.random.Generator,
+) -> _EvalInitState:
+	positions = []
+	init_progress = []
+	occupied = set()
+	for agent_id, trajectory in enumerate(agent.trajectory_plan):
+		if not trajectory:
+			raise ValueError(f"No available initial position on sweeping route for agent {agent_id}.")
+	common_progress = int(rng.integers(min(len(trajectory) for trajectory in agent.trajectory_plan)))
+	for agent_id, trajectory in enumerate(agent.trajectory_plan):
+		candidates = sorted(
+			[idx for idx, pos in enumerate(trajectory) if pos not in occupied],
+			key=lambda idx: abs(idx - common_progress),
+		)
+		if not candidates:
+			raise ValueError(f"No available initial position on sweeping route for agent {agent_id}.")
+		progress = candidates[0]
+		pos = trajectory[progress]
+		positions.append(pos)
+		init_progress.append(progress)
+		occupied.add(pos)
+	return _EvalInitState(positions=positions, sweeping_progress=init_progress)
+
+
+def eval_on_all_sessions(
+	env: TrafficMonitorEnv,
+	agent: BaseAgent,
+	seed: int = 42,
+	init_state: _EvalInitState = None,
+) -> Dict[str, List]:
 	# seed the environment once before the loop to initialize its random number generator.
 	# in this way the drones are randomly spawn for each session, but remains consistent across runs
 	env.reset(seed=seed)  
@@ -618,17 +662,19 @@ def eval_on_all_sessions(env: TrafficMonitorEnv, agent: BaseAgent, seed: int = 4
 	for active_session in range(env.total_sessions):
 		# print('=== Running agents on session {} ==='.format(active_session))
 		observation, info = env.reset(options={'active_session': active_session})
-		if init_pos is not None:
-			logger.info(f"Overriding the positions to: {init_pos}")
+		if init_state is not None:
+			logger.info(f"Overriding the positions to: {init_state.positions}")
 			env.positions_history.clear()
 			env.observation_history.clear()
-			env.positions = init_pos # move the drones to high-reward positions
+			env.positions = init_state.positions # move the drones to high-reward positions
 			observation = env.get_observations(env.positions)
 			env.update_history(env.positions, observation)
 			info = env.get_info()
 		# this is bad in general because the agents should be Markov (e.g., doesn't depend on past history)
 		if callable(getattr(agent, 'clear_state', None)):
 			agent.clear_state()
+		if init_state is not None:
+			agent.trajectory_progress = list(init_state.sweeping_progress)
 
 		done = False
 		truncated = False
@@ -651,12 +697,20 @@ def eval_on_all_sessions(env: TrafficMonitorEnv, agent: BaseAgent, seed: int = 4
 	return eval_res
 
 
-def build_trivial_monitoring_agent(agent_type: str, num_drones: int) -> BaseAgent:
+def build_trivial_monitoring_agent(
+	agent_type: str,
+	num_drones: int,
+	sweeping_pos: List[Tuple[int, int]] = None,
+) -> BaseAgent:
 	if agent_type == 'random':
 		return RandomAgent(num_drones=num_drones)
 	if agent_type == 'static':
 		return StaticAgent(num_drones=num_drones)
-	raise ValueError(f"Invalid trivial agent type: {agent_type}. Must be 'random' or 'static'.")
+	if agent_type == 'sweeping':
+		if sweeping_pos is None:
+			raise ValueError("sweeping_pos must be provided for sweeping agents.")
+		return SweepingAgent(num_drones=num_drones, sweeping_pos=sweeping_pos)
+	raise ValueError(f"Invalid trivial agent type: {agent_type}. Must be 'random', 'static' or 'sweeping'.")
 
 
 def eval_agent_repeats(
@@ -670,7 +724,13 @@ def eval_agent_repeats(
 	rng = np.random.default_rng(eval_seed)
 	seeds = rng.choice(10000, size=eval_repeat, replace=False)
 	for seed in seeds:
-		eval_res = eval_on_all_sessions(env, agent, seed=int(seed))
+		init_state = _build_sweeping_eval_init_state(agent, rng) if isinstance(agent, SweepingAgent) else None
+		eval_res = eval_on_all_sessions(
+			env=env,
+			agent=agent,
+			seed=int(seed),
+			init_state=init_state,
+		)
 		res_reps['reward'].append(eval_res['all_reward'])
 		for key, values in eval_res['all_metrics'].items():
 			metric_reps[key].append(values)
@@ -714,7 +774,7 @@ def evaluate_trivial_monitoring_agent(
 		norm_obs=norm_obs,
 		reward_type=reward_type,
 	)
-	agent = build_trivial_monitoring_agent(agent_type, num_drones=num_drones)
+	agent = build_trivial_monitoring_agent(agent_type, num_drones=num_drones, sweeping_pos=env.all_positions)
 
 	stats, reward_reps, metric_reps, trajectories = eval_agent_repeats(
 		env=env,
@@ -834,7 +894,13 @@ if __name__ == '__main__':
 
 
 	parser = argparse.ArgumentParser(description='Build and evaluate the traffic monitoring environment.')
-	parser.add_argument('--agent-type', type=str, default='random', choices=['random', 'static'], help='Evaluate a trivial baseline agent and exit.')
+	parser.add_argument(
+		'--agent-type',
+		type=str,
+		default='random',
+		choices=['random', 'static', 'sweeping'],
+		help='Evaluate a trivial baseline agent and exit.',
+	)
 	parser.add_argument('--num-drones', type=int, default=10, help='Number of drones used for trivial-agent evaluation.')
 	parser.add_argument('--logdir', type=str, default='scratch/drone_monitor_env', help='Directory to store evaluation logs and outputs.')
 	parser.add_argument('--log-level', type=str, default='info', choices=['debug', 'info', 'warning', 'error', 'critical'])
