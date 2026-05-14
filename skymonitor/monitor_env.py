@@ -27,8 +27,13 @@ from skymonitor.agents import (
 	DroneAction,
 	ActionToDirection,
 )
-from skymonitor.congestion import get_congestion_score, get_congestion_change
-from skymonitor.mfd_reward import calculate_mfd_metrics
+from skymonitor.congestion import (
+	get_congestion_score,
+	get_congestion_change,
+	get_congestion_level,
+	get_congestion_level_change,
+)
+from skymonitor.mfd_reward import calculate_mfd_metrics, calculate_region_mfd_metrics
 from skytraffic.utils.structure import build_grid_xy_to_id
 
 logger = logging.getLogger(__name__)
@@ -44,6 +49,10 @@ class TrafficData:
 	score: np.ndarray = None # shape (num_sessions, num_time_steps, num_positions)
 	enters: np.ndarray = None # shape (num_sessions, num_time_steps, num_positions)
 	exits: np.ndarray = None # shape (num_sessions, num_time_steps, num_positions)
+	level_state: np.ndarray = None # shape (num_sessions, num_time_steps, num_positions)
+	level_change: np.ndarray = None # shape (num_sessions, num_time_steps, num_positions)
+	level_change_weight: np.ndarray = None # shape (num_sessions, num_time_steps, num_positions)
+	region_ids: np.ndarray = None # shape (num_positions, )
 
 # make them un-mutable dataclasses for safety
 @dataclass(frozen=True)
@@ -157,6 +166,9 @@ class TrafficMonitorEnv(gym.Env):
 		seed: int = None,
 	):
 		super().__init__()
+		valid_reward_types = {'congestion', 'mfd', 'congestion_level', 'region_mfd'}
+		if reward_type not in valid_reward_types:
+			raise ValueError(f"Invalid reward_type {reward_type}. Must be one of {sorted(valid_reward_types)}.")
 		# data container
 		self.traffic_data = data
 		# map structure info
@@ -210,6 +222,12 @@ class TrafficMonitorEnv(gym.Env):
 		self.total_sessions = S
 		self.total_steps = T
 		self.total_locations = P
+		self.region_ids = (
+			np.zeros(P, dtype=np.int64)
+			if self.traffic_data.region_ids is None
+			else np.asarray(self.traffic_data.region_ids, dtype=np.int64)
+		)
+		assert self.region_ids.shape == (P,), "region_ids must have shape (num_positions, )."
 
 		# running states
 		self.step_index: int = 0
@@ -326,47 +344,90 @@ class TrafficMonitorEnv(gym.Env):
 	def calculate_step_metrics(self, observation: Dict[str, np.ndarray]) -> Dict[str, float]:
 		"""Compute reward and reportable physical metrics for the current step."""
 		coverage = observation['coverage_mask'].astype(np.float32)
-		if self.reward_type == 'mfd':
-			return calculate_mfd_metrics(
-				flow=self.traffic_data.flow[self.active_session, self.step_index, :],
-				density=self.traffic_data.density[self.active_session, self.step_index, :],
-				segment_lengths=self.traffic_data.segment_lengths,
-				coverage_mask=coverage,
-			)
+		flow = self.traffic_data.flow[self.active_session, self.step_index, :]
+		density = self.traffic_data.density[self.active_session, self.step_index, :]
 
 		enters = self.traffic_data.enters[self.active_session, self.step_index, :].astype(np.float32)
 		exits = self.traffic_data.exits[self.active_session, self.step_index, :].astype(np.float32)
 		congestion_change = enters + exits
 		covered_congestion_change = (coverage * congestion_change).sum()
 		total_congestion_change = congestion_change.sum()
-		reward = (self.avg_flow_by_location * coverage * congestion_change).sum()
+		congestion_reward = (self.avg_flow_by_location * coverage * congestion_change).sum()
 
-		return {
+		level_change = self.traffic_data.level_change[self.active_session, self.step_index, :].astype(np.float32)
+		level_change_weight = self.traffic_data.level_change_weight[self.active_session, self.step_index, :]
+		covered_congestion_level_change = (coverage * level_change).sum()
+		total_congestion_level_change = level_change.sum()
+		covered_weighted_congestion_level_change = (coverage * level_change_weight).sum()
+		total_weighted_congestion_level_change = level_change_weight.sum()
+		congestion_level_reward = (self.avg_flow_by_location * coverage * level_change_weight).sum()
+
+		mfd_metrics = calculate_mfd_metrics(
+			flow=flow,
+			density=density,
+			segment_lengths=self.traffic_data.segment_lengths,
+			coverage_mask=coverage,
+		)
+		mfd_reward = mfd_metrics.pop('reward')
+		region_mfd_metrics = calculate_region_mfd_metrics(
+			flow=flow,
+			density=density,
+			segment_lengths=self.traffic_data.segment_lengths,
+			coverage_mask=coverage,
+			region_ids=self.region_ids,
+		)
+		region_mfd_reward = region_mfd_metrics.pop('region_mfd_reward')
+
+		metrics = {
 			'covered_congestion_change': float(covered_congestion_change.item()),
 			'total_congestion_change': float(total_congestion_change.item()),
-			'reward': float(reward.item()),
+			'covered_congestion_level_change': float(covered_congestion_level_change.item()),
+			'total_congestion_level_change': float(total_congestion_level_change.item()),
+			'covered_weighted_congestion_level_change': float(covered_weighted_congestion_level_change.item()),
+			'total_weighted_congestion_level_change': float(total_weighted_congestion_level_change.item()),
 		}
+		metrics.update(mfd_metrics)
+		metrics.update(region_mfd_metrics)
+		if self.reward_type == 'congestion':
+			reward = congestion_reward
+		elif self.reward_type == 'mfd':
+			reward = mfd_reward
+		elif self.reward_type == 'congestion_level':
+			reward = congestion_level_reward
+		elif self.reward_type == 'region_mfd':
+			reward = region_mfd_reward
+		else:
+			raise ValueError(f"Invalid reward_type {self.reward_type}.")
+		metrics['reward'] = float(reward.item() if hasattr(reward, 'item') else reward)
+		return metrics
 
 	def get_step_metric_reducers(self) -> Dict[str, str]:
-		if self.reward_type == 'mfd':
-			return {
-				'mfd_flow_true': 'mean',
-				'mfd_flow_estimate': 'mean',
-				'mfd_flow_abs_error': 'mean',
-				'mfd_flow_rel_error': 'mean',
-				'mfd_density_true': 'mean',
-				'mfd_density_estimate': 'mean',
-				'mfd_density_abs_error': 'mean',
-				'mfd_density_rel_error': 'mean',
-				'mfd_error': 'mean',
-				'reward': 'sum',
-			}
-
-		return {
+		reducers = {
 			'covered_congestion_change': 'sum',
 			'total_congestion_change': 'sum',
+			'covered_congestion_level_change': 'sum',
+			'total_congestion_level_change': 'sum',
+			'covered_weighted_congestion_level_change': 'sum',
+			'total_weighted_congestion_level_change': 'sum',
 			'reward': 'sum',
 		}
+		mfd_keys = [
+			'mfd_flow_true',
+			'mfd_flow_estimate',
+			'mfd_flow_abs_error',
+			'mfd_flow_rel_error',
+			'mfd_density_true',
+			'mfd_density_estimate',
+			'mfd_density_abs_error',
+			'mfd_density_rel_error',
+			'mfd_error',
+		]
+		for key in mfd_keys:
+			reducers[key] = 'mean'
+			reducers[f'region_{key}'] = 'mean'
+			for region_id in np.unique(self.region_ids):
+				reducers[f'region_{int(region_id)}_{key}'] = 'mean'
+		return reducers
 
 	def aggregate_step_metrics(self, step_metrics: Dict[str, List[float]]) -> Dict[str, float]:
 		reducers = self.get_step_metric_reducers()
@@ -384,6 +445,22 @@ class TrafficMonitorEnv(gym.Env):
 			total_change = episode_metrics['total_congestion_change']
 			episode_metrics['congestion_change_coverage_rate'] = (
 				episode_metrics['covered_congestion_change'] / total_change if total_change > 0 else 0.0
+			)
+		if (
+			'covered_congestion_level_change' in episode_metrics
+			and 'total_congestion_level_change' in episode_metrics
+		):
+			total_change = episode_metrics['total_congestion_level_change']
+			episode_metrics['congestion_level_change_coverage_rate'] = (
+				episode_metrics['covered_congestion_level_change'] / total_change if total_change > 0 else 0.0
+			)
+		if (
+			'covered_weighted_congestion_level_change' in episode_metrics
+			and 'total_weighted_congestion_level_change' in episode_metrics
+		):
+			total_change = episode_metrics['total_weighted_congestion_level_change']
+			episode_metrics['weighted_congestion_level_change_coverage_rate'] = (
+				episode_metrics['covered_weighted_congestion_level_change'] / total_change if total_change > 0 else 0.0
 			)
 
 		return episode_metrics
@@ -466,6 +543,8 @@ class TrafficMonitorEnv(gym.Env):
 			'congestion_score': self.traffic_data.score[self.active_session, self.step_index, :],
 			'enters': self.traffic_data.enters[self.active_session, self.step_index, :],
 			'exits': self.traffic_data.exits[self.active_session, self.step_index, :],
+			'congestion_level': self.traffic_data.level_state[self.active_session, self.step_index, :],
+			'congestion_level_change': self.traffic_data.level_change[self.active_session, self.step_index, :],
 		}
 
 	def update_history(self, positions: List[Tuple[int, int]], observation: Dict[str, np.ndarray]) -> None:
@@ -512,12 +591,43 @@ class TrafficMonitorEnv(gym.Env):
 	def render(self):
 		pass
 
+
+def load_region_ids_file(region_ids_file: str | Path) -> np.ndarray:
+	path = Path(region_ids_file)
+	if path.suffix == '.npy':
+		return np.asarray(np.load(path), dtype=np.int64)
+	if path.suffix == '.txt':
+		return np.asarray(np.loadtxt(path, dtype=np.int64), dtype=np.int64)
+
+	data = np.genfromtxt(path, delimiter=',', names=True, dtype=None, encoding=None)
+	if data.dtype.names is None or 'cluster' not in data.dtype.names:
+		raise ValueError("CSV region id files must include a 'cluster' column.")
+	if 'id' in data.dtype.names:
+		return np.column_stack([data['id'], data['cluster']]).astype(np.int64)
+	return np.asarray(np.atleast_1d(data['cluster']), dtype=np.int64)
+
+
+def resolve_region_ids(region_ids: np.ndarray, dataset: SimBarcaExplore) -> np.ndarray:
+	region_ids = np.asarray(region_ids, dtype=np.int64)
+	if region_ids.ndim == 2:
+		assert region_ids.shape[1] == 2, "Two-column region ID overrides must be [simulator_id, cluster_id]."
+		order = np.argsort(region_ids[:, 0])
+		simulator_ids = region_ids[order, 0]
+		if not np.array_equal(simulator_ids, dataset.section_ids_sorted):
+			raise ValueError("Region override simulator IDs do not match the dataset section IDs.")
+		return region_ids[order, 1]
+	return region_ids
+
+
 def prepare_env_data_structure(
 	dataset: SimBarcaExplore,
 	density_threshold=0.001,
 	ff_quantile=0.85,
 	entry_thd=0.5,
 	exit_thd=0.7,
+	congestion_level_thresholds=(0.25, 0.5, 0.75),
+	level_change_weights=(1.0, 2.0, 3.0),
+	region_ids: np.ndarray = None,
 ):
 	# the time window and time step setting are not relevant to RL environment
 	# as they are related to generating indexes for data sampling batch-wise training
@@ -532,6 +642,13 @@ def prepare_env_data_structure(
 		ff_quantile=ff_quantile,
 	)
 	state, enters, exits = get_congestion_change(congestion_score, entry_thd=entry_thd, exit_thd=exit_thd)
+	level_state = get_congestion_level(congestion_score, thresholds=congestion_level_thresholds)
+	level_change, level_change_weight = get_congestion_level_change(level_state, weights=level_change_weights)
+	if region_ids is None:
+		region_ids = dataset.cluster_id
+	else:
+		region_ids = resolve_region_ids(region_ids, dataset)
+	region_ids = np.asarray(region_ids, dtype=np.int64)
 
 	traffic_data = TrafficData(
 		flow=flow,
@@ -542,6 +659,10 @@ def prepare_env_data_structure(
 		score=congestion_score,
 		enters=enters,
 		exits=exits,
+		level_state=level_state,
+		level_change=level_change,
+		level_change_weight=level_change_weight,
+		region_ids=region_ids,
 	)
 	map_structure = MapStructure(
 		node_coordinates=dataset.node_coordinates,
@@ -561,6 +682,9 @@ def build_traffic_monitor_env(
 	env_type: str = 'train',
 	norm_obs: bool = True,
 	reward_type: str = 'congestion',
+	congestion_level_thresholds=(0.25, 0.5, 0.75),
+	level_change_weights=(1.0, 2.0, 3.0),
+	region_ids: np.ndarray = None,
 ) -> Tuple[TrafficMonitorEnv, Optional[TrafficMonitorEnv]]:
 	"""
 	Build the traffic monitoring envs.
@@ -571,7 +695,8 @@ def build_traffic_monitor_env(
 		num_drones (int): number of drones
 		env_type (str, optional): type of environment to build. One of 'train', 'test', or 'both'. Defaults to 'train'.
 		norm_obs (bool, optional): whether to normalize observations. Defaults to True.
-		reward_type (str, optional): reward definition. One of 'congestion' or 'mfd'. Defaults to 'congestion'.
+		reward_type (str, optional): reward definition. One of 'congestion', 'mfd', 'congestion_level' or
+			'region_mfd'. Defaults to 'congestion'.
 	Returns:
 		Tuple[TrafficMonitorEnv, Optional[TrafficMonitorEnv]]: train and test environments
 	"""
@@ -581,7 +706,12 @@ def build_traffic_monitor_env(
 		raise ValueError("testset must be provided when env_type is 'test' or 'both'.")
 
 	# by default build the training environment
-	train_traffic_data, train_map_structure = prepare_env_data_structure(trainset)
+	train_traffic_data, train_map_structure = prepare_env_data_structure(
+		trainset,
+		congestion_level_thresholds=congestion_level_thresholds,
+		level_change_weights=level_change_weights,
+		region_ids=region_ids,
+	)
 	normalizer = ObservationNormalizer(train_traffic_data)
 
 	train_env = TrafficMonitorEnv(
@@ -594,7 +724,12 @@ def build_traffic_monitor_env(
 
 	# if requested, build the test environment
 	if env_type in ['test', 'both']:
-		test_traffic_data, test_map_structure = prepare_env_data_structure(testset)
+		test_traffic_data, test_map_structure = prepare_env_data_structure(
+			testset,
+			congestion_level_thresholds=congestion_level_thresholds,
+			level_change_weights=level_change_weights,
+			region_ids=region_ids,
+		)
 		test_env = TrafficMonitorEnv(
 			data=test_traffic_data,
 			map_structure=test_map_structure,
@@ -761,11 +896,15 @@ def evaluate_trivial_monitoring_agent(
 	eval_seed: int,
 	norm_obs: bool = True,
 	reward_type: str = 'congestion',
+	congestion_level_thresholds=(0.25, 0.5, 0.75),
+	level_change_weights=(1.0, 2.0, 3.0),
+	region_ids_file: str = None,
 ) -> Dict:
 	log_path = Path(log_dir)
 	log_path.mkdir(parents=True, exist_ok=True)
 
 	trainset, testset = initialize_dataset()
+	region_ids = load_region_ids_file(region_ids_file) if region_ids_file is not None else None
 	env: TrafficMonitorEnv = build_traffic_monitor_env(
 		trainset=trainset,
 		testset=testset,
@@ -773,6 +912,9 @@ def evaluate_trivial_monitoring_agent(
 		env_type='test',
 		norm_obs=norm_obs,
 		reward_type=reward_type,
+		congestion_level_thresholds=congestion_level_thresholds,
+		level_change_weights=level_change_weights,
+		region_ids=region_ids,
 	)
 	agent = build_trivial_monitoring_agent(agent_type, num_drones=num_drones, sweeping_pos=env.all_positions)
 
@@ -907,7 +1049,33 @@ if __name__ == '__main__':
 	parser.add_argument('--eval-repeat', type=int, default=5, help='Number of evaluation runs.')
 	parser.add_argument('--eval-seed', type=int, default=888, help='Seed for the evaluation environment.')
 	parser.add_argument('--norm-obs', action=argparse.BooleanOptionalAction, default=True, help='Normalize observations.')
-	parser.add_argument('--reward-type', type=str, default='congestion', choices=['congestion', 'mfd'], help='Reward definition for evaluation.')
+	parser.add_argument(
+		'--reward-type',
+		type=str,
+		default='congestion',
+		choices=['congestion', 'mfd', 'congestion_level', 'region_mfd'],
+		help='Reward definition for evaluation.',
+	)
+	parser.add_argument(
+		'--congestion-level-thresholds',
+		type=float,
+		nargs=3,
+		default=(0.25, 0.5, 0.75),
+		help='Three congestion score thresholds defining levels 1-4.',
+	)
+	parser.add_argument(
+		'--level-change-weights',
+		type=float,
+		nargs=3,
+		default=(1.0, 2.0, 3.0),
+		help='Adjacent weights for congestion level changes 1-2, 2-3, and 3-4.',
+	)
+	parser.add_argument(
+		'--region-ids-file',
+		type=str,
+		default=None,
+		help="Optional .npy or CSV file with a 'cluster' column.",
+	)
 	args = parser.parse_args()
 
 	make_dir_if_not_exist(args.logdir)
@@ -926,4 +1094,7 @@ if __name__ == '__main__':
 			eval_seed=args.eval_seed,
 			norm_obs=args.norm_obs,
 			reward_type=args.reward_type,
+			congestion_level_thresholds=tuple(args.congestion_level_thresholds),
+			level_change_weights=tuple(args.level_change_weights),
+			region_ids_file=args.region_ids_file,
 		)

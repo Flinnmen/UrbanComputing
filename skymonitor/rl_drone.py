@@ -29,6 +29,7 @@ from skymonitor.monitor_env import (
 	TrafficMonitorEnv,
 	eval_agent_repeats,
 	eval_on_all_sessions,
+	load_region_ids_file,
 )
 from skymonitor.simbarca_explore import initialize_dataset
 from skymonitor.visualize import animate_trajectory
@@ -101,6 +102,9 @@ def train_monitoring_agent_with_ppo(
 	eval_seed: int = 888,
 	norm_obs: bool = False,
 	reward_type: str = 'congestion',
+	congestion_level_thresholds=(0.25, 0.5, 0.75),
+	level_change_weights=(1.0, 2.0, 3.0),
+	region_ids: np.ndarray = None,
 ) -> PPO:
 	"""Train PPO on the monitoring environment with the custom policy."""
 
@@ -122,6 +126,9 @@ def train_monitoring_agent_with_ppo(
 				env_type='train',
 				norm_obs=norm_obs,
 				reward_type=reward_type,
+				congestion_level_thresholds=congestion_level_thresholds,
+				level_change_weights=level_change_weights,
+				region_ids=region_ids,
 			)
 			env.reset(seed=seed + rank)
 			return env
@@ -163,6 +170,9 @@ def train_monitoring_agent_with_ppo(
 			env_type='test',
 			norm_obs=norm_obs,
 			reward_type=reward_type,
+			congestion_level_thresholds=congestion_level_thresholds,
+			level_change_weights=level_change_weights,
+			region_ids=region_ids,
 		),
 		policy=model,
 		eval_freq=eval_freq,
@@ -195,7 +205,33 @@ if __name__ == '__main__':
 	parser.add_argument('--eval-repeat', type=int, default=5, help='Number of evaluation runs.')
 	parser.add_argument('--eval-seed', type=int, default=888, help='Seed for the evaluation environment.')
 	parser.add_argument('--norm-obs', action=argparse.BooleanOptionalAction, default=True, help='Normalize observations, default True. Pass --no-norm-obs to disable.')
-	parser.add_argument('--reward-type', type=str, default='congestion', choices=['congestion', 'mfd'], help='Reward definition for training and evaluation.')
+	parser.add_argument(
+		'--reward-type',
+		type=str,
+		default='congestion',
+		choices=['congestion', 'mfd', 'congestion_level', 'region_mfd'],
+		help='Reward definition for training and evaluation.',
+	)
+	parser.add_argument(
+		'--congestion-level-thresholds',
+		type=float,
+		nargs=3,
+		default=(0.25, 0.5, 0.75),
+		help='Three congestion score thresholds defining levels 1-4.',
+	)
+	parser.add_argument(
+		'--level-change-weights',
+		type=float,
+		nargs=3,
+		default=(1.0, 2.0, 3.0),
+		help='Adjacent weights for congestion level changes 1-2, 2-3, and 3-4.',
+	)
+	parser.add_argument(
+		'--region-ids-file',
+		type=str,
+		default=None,
+		help="Optional .npy or CSV file with a 'cluster' column.",
+	)
 	args = parser.parse_args()
 
 	make_dir_if_not_exist(args.logdir)
@@ -205,6 +241,7 @@ if __name__ == '__main__':
 		level=getattr(logging, args.log_level.upper()),
 	)
 	logger.info('Arguments: {}'.format(args))
+	region_ids = load_region_ids_file(args.region_ids_file) if args.region_ids_file is not None else None
 
 	if not args.eval_only:
 		logger.info('Training PPO monitoring agent.')
@@ -222,6 +259,9 @@ if __name__ == '__main__':
 			eval_seed=args.eval_seed,
 			norm_obs=args.norm_obs,
 			reward_type=args.reward_type,
+			congestion_level_thresholds=tuple(args.congestion_level_thresholds),
+			level_change_weights=tuple(args.level_change_weights),
+			region_ids=region_ids,
 		)
 
 	# test the agent
@@ -234,6 +274,9 @@ if __name__ == '__main__':
 		env_type='test',
 		norm_obs=args.norm_obs,
 		reward_type=args.reward_type,
+		congestion_level_thresholds=tuple(args.congestion_level_thresholds),
+		level_change_weights=tuple(args.level_change_weights),
+		region_ids=region_ids,
 	)
 
 	if not args.eval_only:

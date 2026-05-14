@@ -2,7 +2,12 @@ import unittest
 
 import numpy as np
 
-from skymonitor.mfd_reward import calculate_mfd_metrics, calculate_mfd_reward, estimate_mfd
+from skymonitor.mfd_reward import (
+	calculate_mfd_metrics,
+	calculate_mfd_reward,
+	calculate_region_mfd_metrics,
+	estimate_mfd,
+)
 
 
 class TestMFDReward(unittest.TestCase):
@@ -47,6 +52,20 @@ class TestMFDReward(unittest.TestCase):
 
 		self.assertEqual(estimate_mfd(flow, density, lengths, coverage), (0.0, 0.0))
 		self.assertAlmostEqual(calculate_mfd_reward(flow, density, lengths, coverage), -1.0)
+
+	def test_region_mfd_metrics_average_region_errors(self):
+		flow = np.array([1.0, 10.0])
+		density = np.array([2.0, 20.0])
+		lengths = np.array([1.0, 1.0])
+		coverage = np.array([1, 0])
+		region_ids = np.array([0, 1])
+
+		metrics = calculate_region_mfd_metrics(flow, density, lengths, coverage, region_ids)
+
+		self.assertAlmostEqual(metrics['region_0_mfd_error'], 0.0)
+		self.assertAlmostEqual(metrics['region_1_mfd_error'], 1.0)
+		self.assertAlmostEqual(metrics['region_mfd_error'], 0.5)
+		self.assertAlmostEqual(metrics['region_mfd_reward'], -0.5)
 
 
 if __name__ == '__main__':

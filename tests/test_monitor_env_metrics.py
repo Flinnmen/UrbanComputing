@@ -1,4 +1,5 @@
 import unittest
+import tempfile
 
 import numpy as np
 
@@ -9,10 +10,17 @@ from skymonitor.monitor_env import (
 	TrafficMonitorEnv,
 	eval_agent_repeats,
 	eval_on_all_sessions,
+	load_region_ids_file,
+	resolve_region_ids,
 )
 
 
-def build_two_segment_env(reward_type: str, enters: np.ndarray = None) -> TrafficMonitorEnv:
+def build_two_segment_env(
+	reward_type: str,
+	enters: np.ndarray = None,
+	level_change_weight: np.ndarray = None,
+	region_ids: np.ndarray = None,
+) -> TrafficMonitorEnv:
 	flow = np.array([
 		[[1.0, 3.0], [3.0, 5.0]],
 		[[3.0, 5.0], [1.0, 3.0]],
@@ -22,6 +30,8 @@ def build_two_segment_env(reward_type: str, enters: np.ndarray = None) -> Traffi
 		[[7.0, 9.0], [5.0, 7.0]],
 	])
 	zeros_bool = np.zeros(flow.shape, dtype=bool)
+	if level_change_weight is None:
+		level_change_weight = np.zeros(flow.shape, dtype=np.float32)
 	traffic_data = TrafficData(
 		flow=flow,
 		density=density,
@@ -31,6 +41,10 @@ def build_two_segment_env(reward_type: str, enters: np.ndarray = None) -> Traffi
 		score=np.zeros(flow.shape, dtype=float),
 		enters=zeros_bool if enters is None else enters,
 		exits=zeros_bool,
+		level_state=np.ones(flow.shape, dtype=np.int8),
+		level_change=level_change_weight > 0,
+		level_change_weight=level_change_weight,
+		region_ids=np.array([0, 1]) if region_ids is None else region_ids,
 	)
 	map_structure = MapStructure(
 		node_coordinates=np.array([[0.0, 0.0], [1.0, 0.0]]),
@@ -64,6 +78,8 @@ class TestMonitorEnvMetrics(unittest.TestCase):
 		self.assertAlmostEqual(metrics['reward'], 2.0)
 		self.assertAlmostEqual(metrics['covered_congestion_change'], 1.0)
 		self.assertAlmostEqual(metrics['total_congestion_change'], 2.0)
+		self.assertIn('mfd_error', metrics)
+		self.assertIn('region_mfd_error', metrics)
 
 		episode_metrics = env.aggregate_step_metrics({key: [value] for key, value in metrics.items()})
 		self.assertAlmostEqual(episode_metrics['congestion_change_coverage_rate'], 0.5)
@@ -82,6 +98,48 @@ class TestMonitorEnvMetrics(unittest.TestCase):
 		self.assertAlmostEqual(metrics['mfd_error'], 0.5 * (1.0 / 4.0 + 1.0 / 8.0))
 		self.assertAlmostEqual(metrics['reward'], reward)
 		self.assertAlmostEqual(reward, -metrics['mfd_error'])
+		self.assertIn('covered_congestion_change', metrics)
+		self.assertIn('covered_congestion_level_change', metrics)
+
+	def test_congestion_level_reward_weights_larger_jumps(self):
+		small_change = np.zeros((2, 2, 2), dtype=np.float32)
+		large_change = np.zeros((2, 2, 2), dtype=np.float32)
+		small_change[0, 1, 0] = 1.0
+		large_change[0, 1, 0] = 6.0
+
+		env_small = build_two_segment_env('congestion_level', level_change_weight=small_change)
+		env_large = build_two_segment_env('congestion_level', level_change_weight=large_change)
+		env_small.reset(seed=1, options={'active_session': 0})
+		env_large.reset(seed=1, options={'active_session': 0})
+		_, reward_small, _, _, info_small = env_small.step([DroneAction.STAY.value])
+		_, reward_large, _, _, info_large = env_large.step([DroneAction.STAY.value])
+
+		self.assertGreater(reward_large, reward_small)
+		self.assertAlmostEqual(info_small['step_metrics']['covered_congestion_level_change'], 1.0)
+		self.assertAlmostEqual(info_large['step_metrics']['covered_weighted_congestion_level_change'], 6.0)
+
+	def test_region_mfd_reward_uses_mean_regional_error(self):
+		env = build_two_segment_env('region_mfd')
+
+		env.reset(seed=1, options={'active_session': 0})
+		_, reward, _, _, info = env.step([DroneAction.STAY.value])
+		metrics = info['step_metrics']
+
+		self.assertAlmostEqual(metrics['region_0_mfd_error'], 0.0)
+		self.assertAlmostEqual(metrics['region_1_mfd_error'], 1.0)
+		self.assertAlmostEqual(metrics['region_mfd_error'], 0.5)
+		self.assertAlmostEqual(reward, -metrics['region_mfd_error'])
+
+	def test_two_column_txt_region_override_uses_cluster_column(self):
+		with tempfile.NamedTemporaryFile(mode='w', suffix='.txt') as fp:
+			fp.write('513\t3\n512\t2\n')
+			fp.flush()
+			region_ids = load_region_ids_file(fp.name)
+
+		class Dataset:
+			section_ids_sorted = np.array([512, 513])
+
+		self.assertEqual(resolve_region_ids(region_ids, Dataset()).tolist(), [2, 3])
 
 	def test_eval_repeats_return_metric_arrays(self):
 		enters = np.zeros((2, 2, 2), dtype=bool)
@@ -98,6 +156,9 @@ class TestMonitorEnvMetrics(unittest.TestCase):
 		stats, reward_reps, metric_reps, _ = eval_agent_repeats(env, agent, eval_repeat=1, eval_seed=1)
 		self.assertEqual(reward_reps.tolist(), [[2.0, 0.0]])
 		self.assertEqual(metric_reps['covered_congestion_change'].tolist(), [[1.0, 0.0]])
+		self.assertIn('mfd_error', metric_reps)
+		self.assertIn('region_mfd_error', metric_reps)
+		self.assertIn('covered_congestion_level_change', metric_reps)
 		self.assertEqual(stats['avg_covered_congestion_change_per_session'], [1.0, 0.0])
 
 

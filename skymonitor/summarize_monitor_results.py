@@ -2,23 +2,31 @@
 import argparse
 import json
 import re
-import statistics
 from pathlib import Path
 
 
-METRICS_BY_REWARD_TYPE = {
-	'mfd': [
-		('Flow Abs Error', 'mfd_flow_abs_error'),
-		('Flow Rel Error', 'mfd_flow_rel_error'),
-		('Density Abs Error', 'mfd_density_abs_error'),
-		('Density Rel Error', 'mfd_density_rel_error'),
-		('MFD Error', 'mfd_error'),
-	],
+REWARD_TYPES = ['congestion', 'mfd', 'congestion_level', 'region_mfd']
+
+TABLE_METRICS = {
 	'congestion': [
-		('Reward', 'reward'),
-		('Covered Change', 'covered_congestion_change'),
-		('Total Change', 'total_congestion_change'),
-		('Coverage Rate', 'congestion_change_coverage_rate'),
+		('Covered', 'covered_congestion_change'),
+		('Total', 'total_congestion_change'),
+		('Rate', 'congestion_change_coverage_rate'),
+	],
+	'mfd': [
+		('Flow AE', 'mfd_flow_abs_error'),
+		('Flow RE', 'mfd_flow_rel_error'),
+		('Density AE', 'mfd_density_abs_error'),
+		('Density RE', 'mfd_density_rel_error'),
+		('MFD Err', 'mfd_error'),
+	],
+	'congestion_level': [
+		('Covered', 'covered_congestion_level_change'),
+		('Total', 'total_congestion_level_change'),
+		('W Covered', 'covered_weighted_congestion_level_change'),
+		('W Total', 'total_weighted_congestion_level_change'),
+		('Rate', 'congestion_level_change_coverage_rate'),
+		('W Rate', 'weighted_congestion_level_change_coverage_rate'),
 	],
 }
 
@@ -35,125 +43,103 @@ def pick_result_file(run_dir: Path, result_glob: str) -> Path | None:
 	return max(files, key=lambda path: (repeat_count(path), path.name))
 
 
-def classify_run(run_dir: Path, reward_type: str):
-	prefix = 'drone_monitor_'
-	if not run_dir.name.startswith(prefix):
-		return None
+def method_sort_key(name: str):
+	label = name.removeprefix('drone_monitor_')
+	baseline_order = {'random': 0, 'static': 1, 'sweeping': 2}
+	for baseline, order in baseline_order.items():
+		if label == baseline or label.startswith(f'{baseline}_'):
+			return (0, order, label)
 
-	name = run_dir.name.removeprefix(prefix)
-	if name == f'random_{reward_type}':
-		return {'kind': 'baseline', 'label': name, 'sort_key': (0, 0)}
-	if name == f'static_{reward_type}':
-		return {'kind': 'baseline', 'label': name, 'sort_key': (1, 0)}
-	if name == f'sweeping_{reward_type}':
-		return {'kind': 'baseline', 'label': name, 'sort_key': (1, 1)}
-
-	match = re.fullmatch(rf'ppo_(.+)_{re.escape(reward_type)}_(\d+)', name)
+	match = re.fullmatch(r'ppo_(.+)_(\d+)', label)
 	if match:
-		policy, index = match.group(1), int(match.group(2))
-		group_label = f'ppo_{policy}_{reward_type}'
-		return {
-			'kind': 'ppo',
-			'label': name,
-			'group_label': group_label,
-			'index': index,
-			'sort_key': (2, group_label, index),
-		}
-
-	return None
+		return (1, match.group(1), int(match.group(2)))
+	return (2, label)
 
 
-def load_runs(scratch_dir: Path, reward_type: str, result_glob: str):
-	runs = []
+def load_methods(scratch_dir: Path, result_glob: str):
+	methods = []
 	for run_dir in scratch_dir.iterdir():
 		if not run_dir.is_dir():
-			continue
-		run_info = classify_run(run_dir, reward_type)
-		if run_info is None:
 			continue
 		result_file = pick_result_file(run_dir, result_glob)
 		if result_file is None:
 			continue
 		with result_file.open() as f:
-			run_info['stats'] = json.load(f)['stats']
-		run_info['result_file'] = result_file
-		runs.append(run_info)
+			stats = json.load(f)['stats']
+		methods.append({
+			'label': run_dir.name.removeprefix('drone_monitor_'),
+			'stats': stats,
+			'result_file': result_file,
+			'sort_key': method_sort_key(run_dir.name),
+		})
 
-	return sorted(runs, key=lambda run: run['sort_key'])
+	return sorted(methods, key=lambda method: method['sort_key'])
 
 
-def value_from_stats(stats: dict, key: str) -> tuple[float, float]:
+def value_from_stats(stats: dict, key: str) -> tuple[float, float] | None:
+	if f'avg_{key}' not in stats or f'std_{key}' not in stats:
+		return None
 	return stats[f'avg_{key}'], stats[f'std_{key}']
 
 
-def summarize_group(runs: list[dict], group_label: str, metrics: list[tuple[str, str]]) -> dict:
-	indices = sorted(run['index'] for run in runs)
-	if len(indices) == 1:
-		index_label = str(indices[0])
-	elif indices == list(range(indices[0], indices[-1] + 1)):
-		index_label = f'{indices[0]}-{indices[-1]}'
-	else:
-		index_label = ','.join(str(index) for index in indices)
-	label = f'{group_label}_{index_label}'
-	stats = {}
-	for _, key in metrics:
-		values = [run['stats'][f'avg_{key}'] for run in runs]
-		stats[f'avg_{key}'] = statistics.fmean(values)
-		stats[f'std_{key}'] = statistics.pstdev(values)
-	return {'label': label, 'stats': stats}
+def discover_region_metrics(methods: list[dict]) -> list[tuple[str, str]]:
+	region_ids = set()
+	for method in methods:
+		for stat_key in method['stats']:
+			match = re.fullmatch(r'avg_region_(\d+)_mfd_error', stat_key)
+			if match and f'std_region_{match.group(1)}_mfd_error' in method['stats']:
+				region_ids.add(int(match.group(1)))
+
+	metrics = [('Avg Err', 'region_mfd_error')]
+	metrics.extend((f'R{region_id}', f'region_{region_id}_mfd_error') for region_id in sorted(region_ids))
+	return metrics
 
 
 def format_value(avg: float, std: float, plus_minus: str) -> str:
 	return f'{avg:.6g} {plus_minus} {std:.3g}'
 
 
-def print_markdown_table(rows: list[dict], metrics: list[tuple[str, str]], plus_minus: str) -> None:
-	headers = ['Run'] + [label for label, _ in metrics]
-	print('| ' + ' | '.join(headers) + ' |')
-	print('|---|' + '|'.join(['---:'] * len(metrics)) + '|')
-	for row in rows:
-		values = [
-			format_value(*value_from_stats(row['stats'], key), plus_minus)
-			for _, key in metrics
-		]
-		print('| ' + row['label'] + ' | ' + ' | '.join(values) + ' |')
+def render_markdown_table(methods: list[dict], metrics: list[tuple[str, str]], plus_minus: str) -> list[str]:
+	lines = []
+	headers = ['Method'] + [label for label, _ in metrics]
+	lines.append('| ' + ' | '.join(headers) + ' |')
+	lines.append('|---|' + '|'.join(['---:'] * len(metrics)) + '|')
+	for method in methods:
+		values = []
+		for _, key in metrics:
+			value = value_from_stats(method['stats'], key)
+			values.append('n/a' if value is None else format_value(*value, plus_minus))
+		lines.append('| ' + method['label'] + ' | ' + ' | '.join(values) + ' |')
+	return lines
 
 
-def build_rows(runs: list[dict], show_ppo_runs: bool, metrics: list[tuple[str, str]]) -> list[dict]:
-	rows = [run for run in runs if run['kind'] == 'baseline']
-	ppo_runs = [run for run in runs if run['kind'] == 'ppo']
-	if show_ppo_runs:
-		rows.extend(ppo_runs)
-
-	grouped = {}
-	for run in ppo_runs:
-		grouped.setdefault(run['group_label'], []).append(run)
-	for group_label in sorted(grouped):
-		rows.append(summarize_group(grouped[group_label], group_label, metrics))
-
-	return rows
+def render_summary(methods: list[dict], plus_minus: str) -> str:
+	lines = ['# SkyMonitor Evaluation Summary', '']
+	for eval_type in REWARD_TYPES:
+		metrics = discover_region_metrics(methods) if eval_type == 'region_mfd' else TABLE_METRICS[eval_type]
+		lines.append(f'## {eval_type}')
+		lines.extend(render_markdown_table(methods, metrics, plus_minus))
+		lines.append('')
+	return '\n'.join(lines)
 
 
 def main() -> None:
 	parser = argparse.ArgumentParser(description='Summarize SkyMonitor evaluation results.')
 	parser.add_argument('--scratch-dir', type=Path, default=Path('scratch'))
-	parser.add_argument('--reward-type', type=str, default='mfd', choices=sorted(METRICS_BY_REWARD_TYPE))
 	parser.add_argument('--result-glob', type=str, default='rep*x_results.json')
-	parser.add_argument('--show-ppo-runs', action='store_true', help='Also print each PPO run before the grouped PPO summary.')
+	parser.add_argument('--output', type=Path, default=None, help='Markdown file to write.')
 	parser.add_argument('--ascii', action='store_true', help='Use "+/-" instead of the "±" symbol.')
 	args = parser.parse_args()
-	metrics = METRICS_BY_REWARD_TYPE[args.reward_type]
 	plus_minus = '+/-' if args.ascii else '±'
 
-	runs = load_runs(args.scratch_dir, args.reward_type, args.result_glob)
-	if not runs:
+	methods = load_methods(args.scratch_dir, args.result_glob)
+	if not methods:
 		raise FileNotFoundError(f'No matching result files found under {args.scratch_dir}.')
 
-	print_markdown_table(
-		build_rows(runs, show_ppo_runs=args.show_ppo_runs, metrics=metrics),
-		metrics,
-		plus_minus,
-	)
+	output_path = args.output if args.output is not None else args.scratch_dir / 'monitor_results_summary.md'
+	output_path.parent.mkdir(parents=True, exist_ok=True)
+	output_path.write_text(render_summary(methods, plus_minus), encoding='utf-8')
+	print(f'Saved summary to {output_path}')
 
 
 if __name__ == '__main__':

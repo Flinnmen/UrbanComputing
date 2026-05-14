@@ -62,3 +62,39 @@ def calculate_mfd_metrics(
 		'mfd_error': float(mfd_error),
 		'reward': float(-mfd_error),
 	}
+
+
+def calculate_region_mfd_metrics(
+	flow: np.ndarray,
+	density: np.ndarray,
+	segment_lengths: np.ndarray,
+	coverage_mask: np.ndarray,
+	region_ids: np.ndarray,
+	eps: float = 1e-8,
+) -> dict[str, float]:
+	"""Calculate MFD metrics per region and their equal-weight regional average."""
+	region_ids = np.asarray(region_ids)
+	assert region_ids.shape == np.asarray(flow).shape, "region_ids must match segment-level flow shape."
+
+	metrics_by_key = {}
+	mean_values = {}
+	for region_id in np.unique(region_ids):
+		region_mask = region_ids == region_id
+		region_metrics = calculate_mfd_metrics(
+			flow=np.asarray(flow)[region_mask],
+			density=np.asarray(density)[region_mask],
+			segment_lengths=np.asarray(segment_lengths)[region_mask],
+			coverage_mask=np.asarray(coverage_mask)[region_mask],
+			eps=eps,
+		)
+		region_key = int(region_id)
+		for key, value in region_metrics.items():
+			if key == 'reward':
+				continue
+			metrics_by_key[f'region_{region_key}_{key}'] = value
+			mean_values.setdefault(key, []).append(value)
+
+	for key, values in mean_values.items():
+		metrics_by_key[f'region_{key}'] = float(np.mean(values))
+	metrics_by_key['region_mfd_reward'] = float(-metrics_by_key['region_mfd_error'])
+	return metrics_by_key
