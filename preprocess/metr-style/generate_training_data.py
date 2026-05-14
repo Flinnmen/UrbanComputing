@@ -13,8 +13,31 @@ import os
 import pandas as pd
 
 
+def read_traffic_df(filename):
+    try:
+        return pd.read_hdf(filename)
+    except TypeError as exc:
+        if "bytes-like object" not in str(exc):
+            raise
+
+        # Newer pandas can fail on the legacy fixed-format METR HDF file.
+        import tables
+
+        with tables.open_file(filename, "r") as hdf:
+            group = hdf.root.df
+            columns = [
+                column.decode() if isinstance(column, bytes) else column
+                for column in group.axis0[:]
+            ]
+            index = pd.to_datetime(group.axis1[:])
+            values = group.block0_values[:]
+
+        return pd.DataFrame(values, index=index, columns=columns)
+
+
 def generate_graph_seq2seq_io_data(
-        df, x_offsets, y_offsets, add_time_in_day=True, add_day_in_week=False, scaler=None
+        df, x_offsets, y_offsets, add_time_in_day=True, add_day_in_week=False, scaler=None,
+        add_historical_avg=False
 ):
     """
     Generate samples from
@@ -40,6 +63,13 @@ def generate_graph_seq2seq_io_data(
         day_in_week = np.zeros(shape=(num_samples, num_nodes, 7))
         day_in_week[np.arange(num_samples), :, df.index.dayofweek] = 1
         data_list.append(day_in_week)
+    if add_historical_avg:
+        from einops import rearrange, repeat
+        data_by_week = rearrange(data, "(W t) P C -> W t P C", t=2016)
+        weekly_avg = data_by_week[:int(data_by_week.shape[0] * 0.8)].mean(axis=0)
+        weekly_avg_rep = repeat(weekly_avg, "t P C -> (W t) P C", W=num_samples // 2016 + 1)
+        weekly_avg_rep = weekly_avg_rep[:data.shape[0]]
+        data_list.append(weekly_avg_rep)
 
     data = np.concatenate(data_list, axis=-1)
     # epoch_len = num_samples + min(x_offsets) - max(y_offsets)
@@ -58,7 +88,7 @@ def generate_graph_seq2seq_io_data(
 
 
 def generate_train_val_test(args):
-    df = pd.read_hdf(args.traffic_df_filename)
+    df = read_traffic_df(args.traffic_df_filename)
     # 0 is the latest observed sample.
     x_offsets = np.sort(
         # np.concatenate(([-week_size + 1, -day_size + 1], np.arange(-11, 1, 1)))
@@ -74,6 +104,7 @@ def generate_train_val_test(args):
         y_offsets=y_offsets,
         add_time_in_day=True,
         add_day_in_week=False,
+        add_historical_avg=True,
     )
 
     print("x shape: ", x.shape, ", y shape: ", y.shape)
@@ -115,12 +146,12 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--output_dir", type=str, default="data/", help="Output directory."
+        "--output_dir", type=str, default="scratch/", help="Output directory."
     )
     parser.add_argument(
         "--traffic_df_filename",
         type=str,
-        default="data/metr-la.h5",
+        default="datasets/metr/metr-la.h5",
         help="Raw traffic readings.",
     )
     args = parser.parse_args()
