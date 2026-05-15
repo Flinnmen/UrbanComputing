@@ -166,7 +166,7 @@ class TrafficMonitorEnv(gym.Env):
 		seed: int = None,
 	):
 		super().__init__()
-		valid_reward_types = {'congestion', 'mfd', 'congestion_level', 'region_mfd'}
+		valid_reward_types = {'congestion', 'mfd', 'congestion_level', 'region_mfd', 'balanced'}
 		if reward_type not in valid_reward_types:
 			raise ValueError(f"Invalid reward_type {reward_type}. Must be one of {sorted(valid_reward_types)}.")
 		# data container
@@ -183,6 +183,12 @@ class TrafficMonitorEnv(gym.Env):
 		self.obs_normalizer = obs_normalizer
 		self.add_historical_avg = add_historical_avg
 		self.reward_type = reward_type
+		self.balanced_reward_weights = {
+			'congestion': 0.20,
+			'congestion_level': 0.30,
+			'mfd': 0.20,
+			'region_mfd': 0.30,
+		}
 
 		# spaces of the environment
 		self.action_space = spaces.MultiDiscrete([len(DroneAction)] * num_drones)
@@ -249,6 +255,11 @@ class TrafficMonitorEnv(gym.Env):
 
 		# amend map structure to make the shape smoother
 		self.all_positions = sorted(list(set(self.map_structure.positions_with_data).union(set(self.patched_pos))))
+		# binary matrix of shape of (num_grids, num_positions), indicating which positions are covered by each grid cell
+		self._reward_coverage_masks = np.stack([
+			self.map_structure.grid_id_of_nodes == self.map_structure.grid_xy_to_id.get((x, y), -1)
+			for x, y in self.map_structure.positions_with_data
+		]).astype(np.float32)
 
 	def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple[Dict, Dict]:
 		"""Resets environment and returns observations and infos for all agents."""
@@ -341,6 +352,13 @@ class TrafficMonitorEnv(gym.Env):
 		"""Define the reward based on the current observation."""
 		return self.calculate_step_metrics(observation)['reward']
 
+	def _best_possible_coverage_reward(self, segment_rewards: np.ndarray) -> float:
+		position_rewards = self._reward_coverage_masks @ np.asarray(segment_rewards, dtype=np.float32)
+		k = min(self.num_drones, len(position_rewards))
+		if k == 0:
+			return 0.0
+		return float(np.partition(position_rewards, -k)[-k:].sum())
+
 	def calculate_step_metrics(self, observation: Dict[str, np.ndarray]) -> Dict[str, float]:
 		"""Compute reward and reportable physical metrics for the current step."""
 		coverage = observation['coverage_mask'].astype(np.float32)
@@ -352,7 +370,8 @@ class TrafficMonitorEnv(gym.Env):
 		congestion_change = enters + exits
 		covered_congestion_change = (coverage * congestion_change).sum()
 		total_congestion_change = congestion_change.sum()
-		congestion_reward = (self.avg_flow_by_location * coverage * congestion_change).sum()
+		congestion_reward_by_location = self.avg_flow_by_location * congestion_change
+		congestion_reward = (coverage * congestion_reward_by_location).sum()
 
 		level_change = self.traffic_data.level_change[self.active_session, self.step_index, :].astype(np.float32)
 		level_change_weight = self.traffic_data.level_change_weight[self.active_session, self.step_index, :]
@@ -360,7 +379,8 @@ class TrafficMonitorEnv(gym.Env):
 		total_congestion_level_change = level_change.sum()
 		covered_weighted_congestion_level_change = (coverage * level_change_weight).sum()
 		total_weighted_congestion_level_change = level_change_weight.sum()
-		congestion_level_reward = (self.avg_flow_by_location * coverage * level_change_weight).sum()
+		congestion_level_reward_by_location = self.avg_flow_by_location * level_change_weight
+		congestion_level_reward = (coverage * congestion_level_reward_by_location).sum()
 
 		mfd_metrics = calculate_mfd_metrics(
 			flow=flow,
@@ -388,6 +408,21 @@ class TrafficMonitorEnv(gym.Env):
 		}
 		metrics.update(mfd_metrics)
 		metrics.update(region_mfd_metrics)
+		if self.reward_type == 'balanced':
+			congestion_scale = self._best_possible_coverage_reward(congestion_reward_by_location)
+			congestion_level_scale = self._best_possible_coverage_reward(congestion_level_reward_by_location)
+			balanced_congestion_score = congestion_reward / congestion_scale if congestion_scale > 0 else 0.0
+			balanced_congestion_level_score = (
+				congestion_level_reward / congestion_level_scale if congestion_level_scale > 0 else 0.0
+			)
+			balanced_mfd_score = 2.0 / (1.0 + mfd_metrics['mfd_error']) - 1.0
+			balanced_region_mfd_score = 2.0 / (1.0 + region_mfd_metrics['region_mfd_error']) - 1.0
+			metrics.update({
+				'balanced_congestion_score': float(balanced_congestion_score),
+				'balanced_congestion_level_score': float(balanced_congestion_level_score),
+				'balanced_mfd_score': float(balanced_mfd_score),
+				'balanced_region_mfd_score': float(balanced_region_mfd_score),
+			})
 		if self.reward_type == 'congestion':
 			reward = congestion_reward
 		elif self.reward_type == 'mfd':
@@ -396,6 +431,11 @@ class TrafficMonitorEnv(gym.Env):
 			reward = congestion_level_reward
 		elif self.reward_type == 'region_mfd':
 			reward = region_mfd_reward
+		elif self.reward_type == 'balanced':
+			reward = sum(
+				self.balanced_reward_weights[key] * metrics[f'balanced_{key}_score']
+				for key in self.balanced_reward_weights
+			)
 		else:
 			raise ValueError(f"Invalid reward_type {self.reward_type}.")
 		metrics['reward'] = float(reward.item() if hasattr(reward, 'item') else reward)
@@ -410,6 +450,10 @@ class TrafficMonitorEnv(gym.Env):
 			'covered_weighted_congestion_level_change': 'sum',
 			'total_weighted_congestion_level_change': 'sum',
 			'reward': 'sum',
+			'balanced_congestion_score': 'mean',
+			'balanced_congestion_level_score': 'mean',
+			'balanced_mfd_score': 'mean',
+			'balanced_region_mfd_score': 'mean',
 		}
 		mfd_keys = [
 			'mfd_flow_true',
@@ -695,8 +739,8 @@ def build_traffic_monitor_env(
 		num_drones (int): number of drones
 		env_type (str, optional): type of environment to build. One of 'train', 'test', or 'both'. Defaults to 'train'.
 		norm_obs (bool, optional): whether to normalize observations. Defaults to True.
-		reward_type (str, optional): reward definition. One of 'congestion', 'mfd', 'congestion_level' or
-			'region_mfd'. Defaults to 'congestion'.
+		reward_type (str, optional): reward definition. One of 'congestion', 'mfd', 'congestion_level',
+			'region_mfd', or 'balanced'. Defaults to 'congestion'.
 	Returns:
 		Tuple[TrafficMonitorEnv, Optional[TrafficMonitorEnv]]: train and test environments
 	"""
@@ -1052,8 +1096,8 @@ if __name__ == '__main__':
 	parser.add_argument(
 		'--reward-type',
 		type=str,
-		default='congestion',
-		choices=['congestion', 'mfd', 'congestion_level', 'region_mfd'],
+		default='balanced',
+		choices=['congestion', 'mfd', 'congestion_level', 'region_mfd', 'balanced'],
 		help='Reward definition for evaluation.',
 	)
 	parser.add_argument(
@@ -1067,7 +1111,7 @@ if __name__ == '__main__':
 		'--level-change-weights',
 		type=float,
 		nargs=3,
-		default=(1.0, 2.0, 3.0),
+		default=(1.0, 2.0, 1.0),
 		help='Adjacent weights for congestion level changes 1-2, 2-3, and 3-4.',
 	)
 	parser.add_argument(

@@ -130,6 +130,36 @@ class TestMonitorEnvMetrics(unittest.TestCase):
 		self.assertAlmostEqual(metrics['region_mfd_error'], 0.5)
 		self.assertAlmostEqual(reward, -metrics['region_mfd_error'])
 
+	def test_balanced_reward_combines_normalized_components(self):
+		enters = np.zeros((2, 2, 2), dtype=bool)
+		enters[0, 1, :] = True
+		level_change_weight = np.zeros((2, 2, 2), dtype=np.float32)
+		level_change_weight[0, 1, 0] = 1.0
+		env = build_two_segment_env(
+			'balanced',
+			enters=enters,
+			level_change_weight=level_change_weight,
+		)
+
+		env.reset(seed=1, options={'active_session': 0})
+		_, reward, _, _, info = env.step([DroneAction.STAY.value])
+		metrics = info['step_metrics']
+
+		mfd_score = 2.0 / (1.0 + metrics['mfd_error']) - 1.0
+		region_mfd_score = 2.0 / (1.0 + metrics['region_mfd_error']) - 1.0
+		expected_reward = (
+			0.20 * 0.5
+			+ 0.30 * 1.0
+			+ 0.20 * mfd_score
+			+ 0.30 * region_mfd_score
+		)
+
+		self.assertAlmostEqual(metrics['balanced_congestion_score'], 0.5)
+		self.assertAlmostEqual(metrics['balanced_congestion_level_score'], 1.0)
+		self.assertAlmostEqual(metrics['balanced_mfd_score'], mfd_score)
+		self.assertAlmostEqual(metrics['balanced_region_mfd_score'], region_mfd_score)
+		self.assertAlmostEqual(reward, expected_reward)
+
 	def test_two_column_txt_region_override_uses_cluster_column(self):
 		with tempfile.NamedTemporaryFile(mode='w', suffix='.txt') as fp:
 			fp.write('513\t3\n512\t2\n')

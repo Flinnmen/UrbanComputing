@@ -1,21 +1,21 @@
 #!/usr/bin/env zsh
 
 region_ids_file=skymonitor/clusters4_Is.txt;
-reward_types=(congestion mfd congestion_level region_mfd);
+reward_types=(congestion_level balanced);
 
 # those trivial agents doesn't learn, so we just pass mfd as a placeholder for reward type
 
-python skymonitor/monitor_env.py --agent-type random --reward-type mfd --region-ids-file ${region_ids_file} --logdir ./scratch/drone_monitor_random_mfd;
+# python skymonitor/monitor_env.py --agent-type random --reward-type mfd --region-ids-file ${region_ids_file} --logdir ./scratch/drone_monitor_random_mfd;
 
-python skymonitor/monitor_env.py --agent-type static --reward-type mfd --region-ids-file ${region_ids_file} --logdir ./scratch/drone_monitor_static_mfd;
+# python skymonitor/monitor_env.py --agent-type static --reward-type mfd --region-ids-file ${region_ids_file} --logdir ./scratch/drone_monitor_static_mfd;
 
-python skymonitor/monitor_env.py --agent-type sweeping --reward-type mfd --region-ids-file ${region_ids_file} --logdir ./scratch/drone_monitor_sweeping_mfd;
+# python skymonitor/monitor_env.py --agent-type sweeping --reward-type mfd --region-ids-file ${region_ids_file} --logdir ./scratch/drone_monitor_sweeping_mfd;
 
 repeats=${1:-5};
 
 echo "Running PPO policies for ${repeats} repeats..."
 
-for reward_type in ${reward_types}; do
+for reward_type in "${reward_types[@]}"; do
     for i in $(seq 1 ${repeats}); do
         base_seed=$((1000 + i * 10))
 

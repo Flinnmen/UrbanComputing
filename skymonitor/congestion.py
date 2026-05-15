@@ -94,7 +94,7 @@ def get_congestion_level(
 
 def get_congestion_level_change(
     congestion_level: np.ndarray,
-    weights: tuple[float, float, float] = (1.0, 2.0, 3.0),
+    weights: tuple[float, float, float] = (1.0, 2.0, 1.0),
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute one-step congestion level changes and weighted change magnitudes."""
     assert congestion_level.ndim == 3, "Expected congestion_level with shape (S, T, P)."

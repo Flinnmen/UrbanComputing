@@ -209,7 +209,7 @@ if __name__ == '__main__':
 		'--reward-type',
 		type=str,
 		default='congestion',
-		choices=['congestion', 'mfd', 'congestion_level', 'region_mfd'],
+		choices=['congestion', 'mfd', 'congestion_level', 'region_mfd', 'balanced'],
 		help='Reward definition for training and evaluation.',
 	)
 	parser.add_argument(
@@ -223,7 +223,7 @@ if __name__ == '__main__':
 		'--level-change-weights',
 		type=float,
 		nargs=3,
-		default=(1.0, 2.0, 3.0),
+		default=(1.0, 2.0, 1.0),
 		help='Adjacent weights for congestion level changes 1-2, 2-3, and 3-4.',
 	)
 	parser.add_argument(

@@ -53,11 +53,49 @@ def method_sort_key(name: str):
 	match = re.fullmatch(r'ppo_(.+)_(\d+)', label)
 	if match:
 		return (1, match.group(1), int(match.group(2)))
+	if label.startswith('ppo_'):
+		return (1, label.removeprefix('ppo_'), 0)
 	return (2, label)
 
 
+def ppo_group_label(label: str) -> str:
+	match = re.fullmatch(r'(ppo_.+)_(\d+)', label)
+	return match.group(1) if match else label
+
+
+def grouped_std(values: list[float], avg: float) -> float:
+	return (sum((value - avg) ** 2 for value in values) / len(values)) ** 0.5
+
+
+def aggregate_methods(label: str, methods: list[dict]) -> dict:
+	if len(methods) == 1:
+		return methods[0]
+
+	stats = {}
+	avg_keys = sorted({
+		key
+		for method in methods
+		for key, value in method['stats'].items()
+		if key.startswith('avg_') and isinstance(value, (int, float))
+	})
+	for avg_key in avg_keys:
+		values = [method['stats'][avg_key] for method in methods if avg_key in method['stats']]
+		if len(values) != len(methods):
+			continue
+		avg = sum(values) / len(values)
+		stats[avg_key] = avg
+		stats[f'std_{avg_key.removeprefix("avg_")}'] = grouped_std(values, avg)
+
+	return {
+		'label': label,
+		'stats': stats,
+		'result_file': [method['result_file'] for method in methods],
+		'sort_key': method_sort_key(label),
+	}
+
+
 def load_methods(scratch_dir: Path, result_glob: str):
-	methods = []
+	method_groups = {}
 	for run_dir in scratch_dir.iterdir():
 		if not run_dir.is_dir():
 			continue
@@ -66,13 +104,19 @@ def load_methods(scratch_dir: Path, result_glob: str):
 			continue
 		with result_file.open() as f:
 			stats = json.load(f)['stats']
-		methods.append({
-			'label': run_dir.name.removeprefix('drone_monitor_'),
+		label = run_dir.name.removeprefix('drone_monitor_')
+		group_label = ppo_group_label(label)
+		method_groups.setdefault(group_label, []).append({
+			'label': label,
 			'stats': stats,
 			'result_file': result_file,
 			'sort_key': method_sort_key(run_dir.name),
 		})
 
+	methods = [
+		aggregate_methods(label, group)
+		for label, group in method_groups.items()
+	]
 	return sorted(methods, key=lambda method: method['sort_key'])
 
 
