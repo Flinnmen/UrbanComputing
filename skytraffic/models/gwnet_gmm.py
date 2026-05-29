@@ -30,6 +30,7 @@ class GWNET_GMM(GWNET):
         anchors: List[float] = [-2.0, -1.0, 0.0, 1.0, 2.0],
         sizes: List[float] = [1.0, 1.0, 1.0, 1.0, 1.0],
         zero_init: bool = False,
+        feature_projection: bool = True,
         mcd_estimation: bool = False,
         # dataset/task parameters
         input_steps: int = 12,
@@ -71,6 +72,7 @@ class GWNET_GMM(GWNET):
             sizes=sizes,
             pred_steps=pred_steps,
             dropout=dropout,
+            feature_projection=feature_projection,
             zero_init=zero_init,
             mcd_estimation=mcd_estimation
         )

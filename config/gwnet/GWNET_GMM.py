@@ -32,6 +32,7 @@ model = L(ForecastModel)(
         anchors=[-2.0, -1.0, 0.0, 1.0, 2.0],
         sizes=[1.0, 1.0, 1.0, 1.0, 1.0],
         zero_init=True,
+        feature_projection=True,
         mcd_estimation=False,
         input_steps=MetrDataset.input_steps,
         pred_steps=MetrDataset.pred_steps,
