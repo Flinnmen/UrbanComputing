@@ -38,6 +38,9 @@ from skytraffic.utils.structure import build_grid_xy_to_id
 
 logger = logging.getLogger(__name__)
 
+BALANCED_REWARD_KEYS = ('congestion', 'congestion_level', 'mfd', 'region_mfd')
+
+
 # make them un-mutable dataclasses for safety
 @dataclass(frozen=True)
 class TrafficData:
@@ -163,6 +166,7 @@ class TrafficMonitorEnv(gym.Env):
 		obs_normalizer: ObservationNormalizer = None,
 		add_historical_avg: bool = True,
 		reward_type: str = 'congestion',
+		balanced_reward_weights: Optional[Dict[str, float]] = None,
 		seed: int = None,
 	):
 		super().__init__()
@@ -183,12 +187,12 @@ class TrafficMonitorEnv(gym.Env):
 		self.obs_normalizer = obs_normalizer
 		self.add_historical_avg = add_historical_avg
 		self.reward_type = reward_type
-		self.balanced_reward_weights = {
-			'congestion': 0.20,
-			'congestion_level': 0.30,
-			'mfd': 0.20,
-			'region_mfd': 0.30,
-		}
+		if balanced_reward_weights is None:
+			self.balanced_reward_weights = {key: 0.25 for key in BALANCED_REWARD_KEYS}
+		else:
+			weights = {key: float(balanced_reward_weights[key]) for key in BALANCED_REWARD_KEYS}
+			total_weight = sum(weights.values())
+			self.balanced_reward_weights = {key: value / total_weight for key, value in weights.items()}
 
 		# spaces of the environment
 		self.action_space = spaces.MultiDiscrete([len(DroneAction)] * num_drones)
@@ -726,6 +730,7 @@ def build_traffic_monitor_env(
 	env_type: str = 'train',
 	norm_obs: bool = True,
 	reward_type: str = 'congestion',
+	balanced_reward_weights: Optional[Dict[str, float]] = None,
 	congestion_level_thresholds=(0.25, 0.5, 0.75),
 	level_change_weights=(1.0, 2.0, 3.0),
 	region_ids: np.ndarray = None,
@@ -764,6 +769,7 @@ def build_traffic_monitor_env(
 		obs_normalizer=normalizer if norm_obs else None,
 		num_drones=num_drones,
 		reward_type=reward_type,
+		balanced_reward_weights=balanced_reward_weights,
 	)
 
 	# if requested, build the test environment
@@ -780,6 +786,7 @@ def build_traffic_monitor_env(
 			obs_normalizer=normalizer if norm_obs else None,
 			num_drones=num_drones,
 			reward_type=reward_type,
+			balanced_reward_weights=balanced_reward_weights,
 		)
 
 	if env_type == 'train':
@@ -940,6 +947,7 @@ def evaluate_trivial_monitoring_agent(
 	eval_seed: int,
 	norm_obs: bool = True,
 	reward_type: str = 'congestion',
+	balanced_reward_weights: Optional[Dict[str, float]] = None,
 	congestion_level_thresholds=(0.25, 0.5, 0.75),
 	level_change_weights=(1.0, 2.0, 3.0),
 	region_ids_file: str = None,
@@ -956,6 +964,7 @@ def evaluate_trivial_monitoring_agent(
 		env_type='test',
 		norm_obs=norm_obs,
 		reward_type=reward_type,
+		balanced_reward_weights=balanced_reward_weights,
 		congestion_level_thresholds=congestion_level_thresholds,
 		level_change_weights=level_change_weights,
 		region_ids=region_ids,
@@ -975,6 +984,12 @@ def evaluate_trivial_monitoring_agent(
 		json.dump(
 			{
 				'stats': stats,
+				'config': {
+					'agent_type': agent_type,
+					'num_drones': num_drones,
+					'reward_type': reward_type,
+					'balanced_reward_weights': env.balanced_reward_weights,
+				},
 				'reward_all_repeats': reward_reps.tolist(),
 				'metrics_all_repeats': {key: values.tolist() for key, values in metric_reps.items()},
 				'trajectories_all_repeats': trajectories,
@@ -1101,6 +1116,14 @@ if __name__ == '__main__':
 		help='Reward definition for evaluation.',
 	)
 	parser.add_argument(
+		'--balanced-reward-weights',
+		type=float,
+		nargs=4,
+		default=(0.25, 0.25, 0.25, 0.25),
+		metavar=('A', 'B', 'C', 'D'),
+		help='Balanced reward weights for congestion, congestion_level, mfd, and region_mfd.',
+	)
+	parser.add_argument(
 		'--congestion-level-thresholds',
 		type=float,
 		nargs=3,
@@ -1129,6 +1152,7 @@ if __name__ == '__main__':
 		level=getattr(logging, args.log_level.upper()),
 	)
 	logger.info('Arguments: {}'.format(args))
+	balanced_reward_weights = dict(zip(BALANCED_REWARD_KEYS, args.balanced_reward_weights))
 
 	evaluate_trivial_monitoring_agent(
 			agent_type=args.agent_type,
@@ -1138,6 +1162,7 @@ if __name__ == '__main__':
 			eval_seed=args.eval_seed,
 			norm_obs=args.norm_obs,
 			reward_type=args.reward_type,
+			balanced_reward_weights=balanced_reward_weights,
 			congestion_level_thresholds=tuple(args.congestion_level_thresholds),
 			level_change_weights=tuple(args.level_change_weights),
 			region_ids_file=args.region_ids_file,

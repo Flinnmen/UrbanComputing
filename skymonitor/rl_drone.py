@@ -25,6 +25,7 @@ from skytraffic.utils.io import make_dir_if_not_exist
 from skymonitor.agents import PolicyAgent
 from skymonitor.policy_net import SimpleDronePolicy, GraphDronePolicy, GridDronePolicy
 from skymonitor.monitor_env import (
+	BALANCED_REWARD_KEYS,
 	build_traffic_monitor_env,
 	TrafficMonitorEnv,
 	eval_agent_repeats,
@@ -102,6 +103,7 @@ def train_monitoring_agent_with_ppo(
 	eval_seed: int = 888,
 	norm_obs: bool = False,
 	reward_type: str = 'congestion',
+	balanced_reward_weights: dict[str, float] = None,
 	congestion_level_thresholds=(0.25, 0.5, 0.75),
 	level_change_weights=(1.0, 2.0, 3.0),
 	region_ids: np.ndarray = None,
@@ -126,6 +128,7 @@ def train_monitoring_agent_with_ppo(
 				env_type='train',
 				norm_obs=norm_obs,
 				reward_type=reward_type,
+				balanced_reward_weights=balanced_reward_weights,
 				congestion_level_thresholds=congestion_level_thresholds,
 				level_change_weights=level_change_weights,
 				region_ids=region_ids,
@@ -170,6 +173,7 @@ def train_monitoring_agent_with_ppo(
 			env_type='test',
 			norm_obs=norm_obs,
 			reward_type=reward_type,
+			balanced_reward_weights=balanced_reward_weights,
 			congestion_level_thresholds=congestion_level_thresholds,
 			level_change_weights=level_change_weights,
 			region_ids=region_ids,
@@ -213,6 +217,14 @@ if __name__ == '__main__':
 		help='Reward definition for training and evaluation.',
 	)
 	parser.add_argument(
+		'--balanced-reward-weights',
+		type=float,
+		nargs=4,
+		default=(0.25, 0.25, 0.25, 0.25),
+		metavar=('A', 'B', 'C', 'D'),
+		help='Balanced reward weights for congestion, congestion_level, mfd, and region_mfd.',
+	)
+	parser.add_argument(
 		'--congestion-level-thresholds',
 		type=float,
 		nargs=3,
@@ -242,6 +254,7 @@ if __name__ == '__main__':
 	)
 	logger.info('Arguments: {}'.format(args))
 	region_ids = load_region_ids_file(args.region_ids_file) if args.region_ids_file is not None else None
+	balanced_reward_weights = dict(zip(BALANCED_REWARD_KEYS, args.balanced_reward_weights))
 
 	if not args.eval_only:
 		logger.info('Training PPO monitoring agent.')
@@ -259,6 +272,7 @@ if __name__ == '__main__':
 			eval_seed=args.eval_seed,
 			norm_obs=args.norm_obs,
 			reward_type=args.reward_type,
+			balanced_reward_weights=balanced_reward_weights,
 			congestion_level_thresholds=tuple(args.congestion_level_thresholds),
 			level_change_weights=tuple(args.level_change_weights),
 			region_ids=region_ids,
@@ -274,6 +288,7 @@ if __name__ == '__main__':
 		env_type='test',
 		norm_obs=args.norm_obs,
 		reward_type=args.reward_type,
+		balanced_reward_weights=balanced_reward_weights,
 		congestion_level_thresholds=tuple(args.congestion_level_thresholds),
 		level_change_weights=tuple(args.level_change_weights),
 		region_ids=region_ids,
@@ -303,6 +318,18 @@ if __name__ == '__main__':
 		json.dump(
 			{
 				'stats': stats,
+				'config': {
+					'policy_type': args.policy_type,
+					'train_timesteps': args.train_timesteps,
+					'num_envs': args.num_envs,
+					'num_drones': args.num_drones,
+					'learning_rate': args.learning_rate,
+					'train_seed': args.train_seed,
+					'eval_repeat': args.eval_repeat,
+					'eval_seed': args.eval_seed,
+					'reward_type': args.reward_type,
+					'balanced_reward_weights': env.balanced_reward_weights,
+				},
 				'reward_all_repeats': reward_reps.tolist(),
 				'metrics_all_repeats': {key: values.tolist() for key, values in metric_reps.items()},
 				'trajectories_all_repeats': trajectories,

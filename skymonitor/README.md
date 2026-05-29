@@ -15,3 +15,7 @@ The agent is rewarded when it can observe the change of congestion state, from c
 
 And I’m training an agent to do this via reinforcement learning, where I implemented my own environment with gymnasium and utilized the training pipeline of stable-baselines3.
 
+## Code Structure
+`monitor_env.py` the traffic monitoring environment for RL agents.
+`mfd_reward.py` the reward function based on Macroscopic Fundamental Diagram (MFD) estimation error.
+`congestion.py` the reward based on congestion state change covered.

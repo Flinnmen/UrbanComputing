@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 
 region_ids_file=skymonitor/clusters4_Is.txt;
-reward_types=(congestion_level balanced);
+reward_types=(congestion congestion_level mfd region_mfd balanced);
 
 # those trivial agents doesn't learn, so we just pass mfd as a placeholder for reward type
 
