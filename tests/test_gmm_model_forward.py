@@ -31,7 +31,7 @@ class TestModels(unittest.TestCase):
 
     def build_wrapper(self, model, normalizer):
         return ForecastModel(
-            model=model,
+            network=model,
             normalizer=normalizer,
             data_null_value=self.dataset.data_null_value,
             metadata=self.dataset.metadata,

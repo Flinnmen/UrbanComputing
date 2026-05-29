@@ -12,7 +12,7 @@ from .MTGNN import dataset, dataloader
 train.output_dir = "scratch/metr_mtgnn_gmm"
 
 model = L(ForecastModel)(
-    model=L(MTGNN_GMM)(
+    network=L(MTGNN_GMM)(
         gcn_true=True,
         buildA_true=True,
         gcn_depth=2,

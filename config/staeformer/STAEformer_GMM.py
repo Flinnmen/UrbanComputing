@@ -13,7 +13,7 @@ train.output_dir = "scratch/metr_staeformer_gmm"
 train.max_epoch = 20
 
 model = L(ForecastModel)(
-    model=L(STAEformer_GMM)(
+    network=L(STAEformer_GMM)(
         steps_per_day=288,
         input_dim=1,
         output_dim=1,
