@@ -21,7 +21,6 @@ metr_gmm_evaluator = L(MetrGMMEvaluator)(
     collect_data=["target"],
     data_min=0.0, 
     data_max=70.0,
-    sp_size=5,
     gpu=True,
     ci_pts=500
 )
@@ -51,7 +50,6 @@ simbarca_speed_gmm_evaluator = L(SimBarcaSpeedGMMEvaluator)(
     collect_data=["target"],
     data_min=0.0, 
     data_max=14.0,
-    sp_size=5,
     gpu=True,
     ci_pts=500
 )

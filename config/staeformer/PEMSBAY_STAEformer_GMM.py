@@ -16,5 +16,4 @@ from skytraffic.data.datasets import PEMSBayDataset
 train.max_epoch = 20
 train.output_dir = "scratch/pemsbay_staeformer_gmm"
 model.network.num_nodes = PEMSBayDataset.num_nodes
-evaluator.sp_size = 3 # reduce memory usage for GMM evaluation
 evaluator.data_max = 85.0 # the max speed of PEMS-Bay dataset is 85 

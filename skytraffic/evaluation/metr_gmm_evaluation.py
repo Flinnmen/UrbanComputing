@@ -4,7 +4,7 @@ import torch.nn as nn
 import numpy as np
 import logging
 from torch.utils.data import DataLoader
-from typing import Dict, List, Tuple
+from typing import Dict
 
 from .metr_evaluation import MetrEvaluator
 from .metrics import (
@@ -29,13 +29,11 @@ class MetrGMMEvaluator(MetrEvaluator):
                  collect_data=["target"],
                  data_min: float = 0.0, 
                  data_max: float = 70.0,
-                 sp_size: int = 5,
                  gpu: bool = True,
                  ci_pts: int = 500):
         super().__init__(save_dir, collect_pred, collect_data)
         self.data_min = data_min # minimum data value (traffic data is typically non-negative)
         self.data_max = data_max # maximum data value (adjustable based on dataset)
-        self.sp_size = sp_size # chunk size for spatial dimension to save memory
         self.gpu = gpu # whether to use GPU acceleration for evaluation
         self.ci_pts = ci_pts # number of points to evaluate GMM density for confidence intervals
 
@@ -51,26 +49,114 @@ class MetrGMMEvaluator(MetrEvaluator):
         Returns:
             Dictionary of evaluation metrics
         """
-        # First get basic deterministic metrics from parent class
-        _ = super().evaluate(model, dataloader, verbose=verbose, visualize=visualize)
-        
-        # Collect predictions and data for GMM evaluation
-        all_preds, all_data = self.collect_predictions(
-            model, dataloader, 
-            pred_seqs=self.collect_pred, 
-            data_seqs=self.collect_data
+        model.eval()
+        xs = torch.linspace(self.data_min, self.data_max, self.ci_pts)
+
+        score_sums_per_horizon = {}
+        score_counts_per_horizon = {}
+
+        def add_scores(name: str, scores: torch.Tensor, valid: torch.Tensor) -> None:
+            scores = scores.detach().cpu().to(torch.float64)
+            valid = valid.detach().cpu()
+            if name not in score_sums_per_horizon:
+                score_sums_per_horizon[name] = torch.zeros(scores.shape[1], dtype=torch.float64)
+                score_counts_per_horizon[name] = torch.zeros(scores.shape[1], dtype=torch.float64)
+
+            score_sums_per_horizon[name] += torch.where(valid, scores, torch.zeros_like(scores)).sum(dim=(0, 2))
+            score_counts_per_horizon[name] += valid.sum(dim=(0, 2)).to(torch.float64)
+
+        def mean_by_horizon(name: str, empty_value: float = float("nan")) -> list:
+            values = torch.full_like(score_sums_per_horizon[name], empty_value)
+            valid = score_counts_per_horizon[name] > 0
+            values[valid] = score_sums_per_horizon[name][valid] / score_counts_per_horizon[name][valid]
+            return values.cpu().numpy().tolist()
+
+        def store_weighted_mean(name: str, verbose: bool = False) -> None:
+            self.metrics_vector[name] = mean_by_horizon(name)
+            if score_counts_per_horizon[name].sum() > 0:
+                self.metrics_scalar[name] = (score_sums_per_horizon[name].sum() / score_counts_per_horizon[name].sum()).item()
+            else:
+                self.metrics_scalar[name] = float("nan")
+
+            if verbose:
+                logger.info(f"Overall average {name}: {self.metrics_scalar[name]:.4f}")
+
+        for data_dict in dataloader:
+            with torch.no_grad():
+                pred_dict = model(data_dict)
+
+            target = data_dict["target"]
+            valid = self.valid_target_mask(target)
+            pred = pred_dict["pred"].detach().cpu()
+            target_cpu = target.detach().cpu()
+            valid_cpu = valid.detach().cpu()
+
+            if torch.isnan(pred).any():
+                logger.warning(f"number of nan in model predictions: {torch.sum(torch.isnan(pred)).item()}")
+
+            error = pred - target_cpu
+            add_scores("mae", error.abs(), valid_cpu)
+            add_scores("mse", error.pow(2), valid_cpu)
+
+            mape_valid = valid_cpu
+            if self.mape_threshold is not None:
+                mape_valid = mape_valid & (target_cpu.abs() > self.mape_threshold)
+            mape = torch.zeros_like(target_cpu)
+            mape[mape_valid] = (error[mape_valid] / target_cpu[mape_valid]).abs()
+            add_scores("mape", mape, mape_valid)
+
+            crps_scores = get_crps_gmm_vs_gt(
+                mixing=pred_dict["mixing"],
+                means=pred_dict["means"],
+                log_var=pred_dict["log_var"],
+                xs=xs,
+                gt=target,
+                gpu=self.gpu,
+            )
+            add_scores("CRPS_GMM_GT", crps_scores, valid_cpu)
+
+            for conf in self.eval_confs:
+                within_ci, interval_width = gmm_interval_coverage_and_width(
+                    mixing=pred_dict["mixing"],
+                    means=pred_dict["means"],
+                    log_var=pred_dict["log_var"],
+                    gt=target,
+                    xs=xs,
+                    conf=conf,
+                    gpu=self.gpu,
+                )
+                add_scores(f"CI_COVER_{conf}", within_ci.float(), valid_cpu)
+                add_scores(f"CI_WIDTH_{conf}", interval_width, valid_cpu)
+
+        self.metrics_vector["mae"] = mean_by_horizon("mae", empty_value=0.0)
+        self.metrics_vector["mape"] = mean_by_horizon("mape", empty_value=0.0)
+        rmse = torch.tensor(mean_by_horizon("mse"))
+        self.metrics_vector["rmse"] = torch.sqrt(rmse).numpy().tolist()
+        self.metrics_scalar.update(
+            self.average_metrics(
+                {
+                    "mae": self.metrics_vector["mae"],
+                    "mape": self.metrics_vector["mape"],
+                    "rmse": self.metrics_vector["rmse"],
+                },
+                verbose=verbose,
+            )
         )
-        
-        if verbose:
-            logger.info("Evaluating CRPS scores")
-        self.evaluate_crps(all_preds, all_data, verbose=verbose)
-        
-        if verbose:
-            logger.info("Evaluating confidence intervals")
-        self.evaluate_confidence_interval(all_preds, all_data, verbose=verbose)
-        
-        # Update results with GMM metrics
+
+        store_weighted_mean("CRPS_GMM_GT", verbose=verbose)
+
+        for conf in self.eval_confs:
+            store_weighted_mean(f"CI_COVER_{conf}", verbose=False)
+            store_weighted_mean(f"CI_WIDTH_{conf}", verbose=False)
+        self.compute_calibration_metrics(verbose=verbose)
+
         return copy.deepcopy(self.metrics_scalar)
+
+    def valid_target_mask(self, target: torch.Tensor) -> torch.Tensor:
+        valid = ~target.isnan()
+        if not np.isnan(self.ignore_value):
+            valid = valid & (target != self.ignore_value)
+        return valid
 
     def evaluate_crps(self, all_preds: Dict[str, torch.Tensor], all_data: Dict[str, torch.Tensor], verbose: bool = False):
         """
@@ -91,12 +177,11 @@ class MetrGMMEvaluator(MetrEvaluator):
             log_var=all_preds["log_var"],
             xs=xs,
             gt=all_data["target"],
-            sp_size=self.sp_size,
             gpu=self.gpu
         )
         
         # Ignore scores where ground truth is NaN
-        crps_scores = ignore_score_when_gt_is(crps_scores, all_data["target"], invalid_gt=0.0)
+        crps_scores = ignore_score_when_gt_is(crps_scores, all_data["target"], invalid_gt=self.ignore_value)
         
         # Analyze and store scores
         self.analyze_scores(crps_scores, note="CRPS_GMM_GT", verbose=verbose)
@@ -111,22 +196,21 @@ class MetrGMMEvaluator(MetrEvaluator):
             verbose: Whether to print results
         """
         xs = torch.linspace(self.data_min, self.data_max, self.ci_pts)
-        tensors = [all_preds["mixing"], all_preds["means"], all_preds["log_var"], all_data["target"]]
-        tensor_names = ["mixing", "means", "log_var", "gt"]
         
         for conf in self.eval_confs:
             within_ci, interval_width = gmm_interval_coverage_and_width(
-                tensors=tensors,
-                tensor_names=tensor_names,
+                mixing=all_preds["mixing"],
+                means=all_preds["means"],
+                log_var=all_preds["log_var"],
+                gt=all_data["target"],
                 xs=xs,
                 conf=conf,
-                sp_size=self.sp_size,
                 gpu=self.gpu
             )
             
             # Ignore scores where ground truth is NaN
-            within_ci = ignore_score_when_gt_is(within_ci, all_data["target"], invalid_gt=0.0)
-            interval_width = ignore_score_when_gt_is(interval_width, all_data["target"], invalid_gt=0.0)
+            within_ci = ignore_score_when_gt_is(within_ci, all_data["target"], invalid_gt=self.ignore_value)
+            interval_width = ignore_score_when_gt_is(interval_width, all_data["target"], invalid_gt=self.ignore_value)
             
             # Store individual confidence level results
             self.analyze_scores(within_ci.float(), note=f"CI_COVER_{conf}", verbose=False)
