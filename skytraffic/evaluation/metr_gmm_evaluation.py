@@ -11,6 +11,7 @@ from .metrics import (
     gmm_interval_coverage_and_width,
     ignore_score_when_gt_is,
     get_crps_gmm_vs_gt,
+    get_gmm_crps_and_ci_scores,
 )
 
 logger = logging.getLogger("default")
@@ -105,28 +106,20 @@ class MetrGMMEvaluator(MetrEvaluator):
             mape[mape_valid] = (error[mape_valid] / target_cpu[mape_valid]).abs()
             add_scores("mape", mape, mape_valid)
 
-            crps_scores = get_crps_gmm_vs_gt(
+            crps_scores, ci_cover, ci_width = get_gmm_crps_and_ci_scores(
                 mixing=pred_dict["mixing"],
                 means=pred_dict["means"],
                 log_var=pred_dict["log_var"],
                 xs=xs,
                 gt=target,
+                confs=self.eval_confs,
                 gpu=self.gpu,
             )
             add_scores("CRPS_GMM_GT", crps_scores, valid_cpu)
 
             for conf in self.eval_confs:
-                within_ci, interval_width = gmm_interval_coverage_and_width(
-                    mixing=pred_dict["mixing"],
-                    means=pred_dict["means"],
-                    log_var=pred_dict["log_var"],
-                    gt=target,
-                    xs=xs,
-                    conf=conf,
-                    gpu=self.gpu,
-                )
-                add_scores(f"CI_COVER_{conf}", within_ci.float(), valid_cpu)
-                add_scores(f"CI_WIDTH_{conf}", interval_width, valid_cpu)
+                add_scores(f"CI_COVER_{conf}", ci_cover[conf].float(), valid_cpu)
+                add_scores(f"CI_WIDTH_{conf}", ci_width[conf], valid_cpu)
 
         self.metrics_vector["mae"] = mean_by_horizon("mae", empty_value=0.0)
         self.metrics_vector["mape"] = mean_by_horizon("mape", empty_value=0.0)
