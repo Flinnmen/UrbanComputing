@@ -148,10 +148,10 @@ class TestMonitorEnvMetrics(unittest.TestCase):
 		mfd_score = 2.0 / (1.0 + metrics['mfd_error']) - 1.0
 		region_mfd_score = 2.0 / (1.0 + metrics['region_mfd_error']) - 1.0
 		expected_reward = (
-			0.20 * 0.5
-			+ 0.30 * 1.0
-			+ 0.20 * mfd_score
-			+ 0.30 * region_mfd_score
+			0.25 * 0.5
+			+ 0.25 * 1.0
+			+ 0.25 * mfd_score
+			+ 0.25 * region_mfd_score
 		)
 
 		self.assertAlmostEqual(metrics['balanced_congestion_score'], 0.5)
