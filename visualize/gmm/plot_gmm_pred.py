@@ -11,7 +11,7 @@ from skytraffic.models.layers import GMMPredictionHead
 
 sns.set_style("darkgrid")
 
-PRED_PATH = Path("mtgnn_gmm_simbarcaspd_outputs.pkl")
+PRED_PATH = Path("figures/lgc_gmm_simbarcaspd_test_preds.pkl")
 OUTPUT_DIR = Path("figures/gmm/mtgnn")
 SAMPLE_PER_SESSION = 20
 POSITION_TO_VISUALIZE = [113, 345, 1068, 806]

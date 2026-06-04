@@ -14,6 +14,7 @@ from pathlib import Path
 sns.set_style("darkgrid")
 plt.rcParams['figure.dpi'] = 300
 plt.rcParams['font.size'] = 12
+plt.rcParams['axes.labelsize'] = 16
 COLORS = colormaps.get_cmap('tab10')
 LINE_STYLES = ['-', '--', '-.']
 
@@ -200,6 +201,8 @@ if __name__ == "__main__":
     parser.add_argument("--res-dir", type=str, default="results_backup")
     parser.add_argument("--dataset", type=str, default="metr")
     args = parser.parse_args()
+
+    Path(SAVE_DIR).mkdir(parents=True, exist_ok=True)
 
     # Load results from all methods (probabilistic methods and deterministic methods)
     results = load_evaluation_results(args.res_dir, args.dataset, res_group_file=RESULT_GROUP_FILE)
