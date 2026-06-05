@@ -237,9 +237,11 @@ class MetrConformalEvaluator(MetrEvaluator):
     def _calibrate(self, model: nn.Module):
         if self.calibration_dataloader is None:
             raise ValueError("MetrConformalEvaluator requires a calibration dataloader or dataset")
+        if self.max_residual_samples <= 0:
+            raise ValueError("max_residual_samples must be positive")
 
         model.eval()
-        residuals_by_horizon = None
+        residuals_by_horizon_place = None
 
         for data_dict in self.calibration_dataloader:
             with torch.no_grad():
@@ -248,37 +250,78 @@ class MetrConformalEvaluator(MetrEvaluator):
             valid = self.valid_target_mask(target)
             residual = target - pred
 
-            if residuals_by_horizon is None:
-                residuals_by_horizon = [[] for _ in range(residual.shape[1])]
+            if residuals_by_horizon_place is None:
+                residuals_by_horizon_place = [
+                    [[] for _ in range(residual.shape[2])]
+                    for _ in range(residual.shape[1])
+                ]
 
             for horizon in range(residual.shape[1]):
-                residuals_by_horizon[horizon].append(residual[:, horizon, :][valid[:, horizon, :]])
+                for place in range(residual.shape[2]):
+                    residuals_by_horizon_place[horizon][place].append(
+                        residual[:, horizon, place][valid[:, horizon, place]]
+                    )
 
-        residuals_by_horizon = [torch.cat(values) for values in residuals_by_horizon]
+        if residuals_by_horizon_place is None:
+            raise ValueError("calibration dataloader yielded no batches")
+
+        residuals_by_horizon_place = [
+            [torch.cat(values) for values in residuals_by_place]
+            for residuals_by_place in residuals_by_horizon_place
+        ]
         abs_quantiles = {conf: [] for conf in self.eval_confs}
-        signed_samples = []
-        pairwise_terms = []
+        signed_samples_by_horizon = []
+        pairwise_terms_by_horizon = []
 
-        for residuals in residuals_by_horizon:
-            residuals = residuals[~residuals.isnan()]
-            abs_residuals = residuals.abs()
-            sample_count = min(self.max_residual_samples, residuals.numel())
-            sample_idx = torch.linspace(0, residuals.numel() - 1, steps=sample_count).round().long()
-            sampled_residuals = residuals[sample_idx].to(torch.float32)
-            signed_samples.append(sampled_residuals)
-            pairwise_terms.append(
-                (sampled_residuals[:, None] - sampled_residuals[None, :]).abs().mean()
-            )
+        for horizon, residuals_by_place in enumerate(residuals_by_horizon_place):
+            signed_samples_by_place = []
+            pairwise_terms_by_place = []
 
-            for conf in self.eval_confs:
-                q_level = min(1.0, np.ceil((abs_residuals.numel() + 1) * conf) / abs_residuals.numel())
-                abs_quantiles[conf].append(torch.quantile(abs_residuals, q_level).item())
+            for place, residuals in enumerate(residuals_by_place):
+                residuals = residuals[~residuals.isnan()]
+                if residuals.numel() == 0:
+                    raise ValueError(
+                        "No valid calibration residuals for "
+                        f"horizon {horizon} and place {place}"
+                    )
 
+                abs_residuals = residuals.abs()
+                sample_count = min(self.max_residual_samples, residuals.numel())
+                sample_idx = torch.linspace(0, residuals.numel() - 1, steps=sample_count).round().long()
+                sampled_residuals = residuals[sample_idx].to(torch.float32)
+                signed_samples_by_place.append(sampled_residuals)
+                pairwise_terms_by_place.append(
+                    (sampled_residuals[:, None] - sampled_residuals[None, :]).abs().mean()
+                )
+
+                for conf in self.eval_confs:
+                    q_level = min(1.0, np.ceil((abs_residuals.numel() + 1) * conf) / abs_residuals.numel())
+                    abs_quantiles[conf].append(torch.quantile(abs_residuals, q_level).item())
+
+            signed_samples_by_horizon.append(signed_samples_by_place)
+            pairwise_terms_by_horizon.append(torch.stack(pairwise_terms_by_place))
+
+        num_horizons = len(residuals_by_horizon_place)
+        num_places = len(residuals_by_horizon_place[0])
         abs_quantiles = {
-            conf: torch.as_tensor(values, dtype=torch.float32)
+            conf: torch.as_tensor(values, dtype=torch.float32).reshape(num_horizons, num_places)
             for conf, values in abs_quantiles.items()
         }
-        return torch.stack(signed_samples), torch.stack(pairwise_terms), abs_quantiles
+        max_sample_count = max(
+            samples.numel()
+            for signed_samples_by_place in signed_samples_by_horizon
+            for samples in signed_samples_by_place
+        )
+        signed_samples = torch.full(
+            (num_horizons, num_places, max_sample_count),
+            float("nan"),
+            dtype=torch.float32,
+        )
+        for horizon, signed_samples_by_place in enumerate(signed_samples_by_horizon):
+            for place, samples in enumerate(signed_samples_by_place):
+                signed_samples[horizon, place, :samples.numel()] = samples
+
+        return signed_samples, torch.stack(pairwise_terms_by_horizon), abs_quantiles
 
     def _conformal_crps(
         self,
@@ -293,9 +336,9 @@ class MetrConformalEvaluator(MetrEvaluator):
         errors = target.to(device) - pred
         mean_abs_error = (
             errors.unsqueeze(-1)
-            - residual_samples.reshape(1, residual_samples.shape[0], 1, residual_samples.shape[1])
-        ).abs().mean(dim=-1)
-        return (mean_abs_error - 0.5 * pairwise_terms.reshape(1, -1, 1)).clamp_min(0.0).cpu()
+            - residual_samples.unsqueeze(0)
+        ).abs().nanmean(dim=-1)
+        return (mean_abs_error - 0.5 * pairwise_terms.unsqueeze(0)).clamp_min(0.0).cpu()
 
     def evaluate(
         self,
@@ -339,7 +382,7 @@ class MetrConformalEvaluator(MetrEvaluator):
             )
 
             for conf in self.eval_confs:
-                half_width = abs_quantiles[conf].reshape(1, -1, 1)
+                half_width = abs_quantiles[conf].reshape(1, *abs_quantiles[conf].shape)
                 covered = (pred - half_width <= target) & (target <= pred + half_width)
                 width = torch.full_like(target, 2.0) * half_width
                 self.add_scores_to_accumulator(
