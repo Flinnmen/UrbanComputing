@@ -60,8 +60,8 @@ for confidence, color in zip([0.3, 0.5, 0.7, 0.9], ['darkred', 'orange', 'darkgr
         xs_in_interval = xs[(xs >= vl) & (xs <= vu)]
         
         plt.fill_between(xs_in_interval, 0, mixture_density[(xs >= vl) & (xs <= vu)], alpha=0.3, color=color)
-        plt.axvline(vl, linestyle='-.', color=color, label='{}%_interval'.format(int(confidence*100)))
-        plt.axvline(vu, linestyle='-.', color=color, label='{}%_interval'.format(int(confidence*100)))
+        plt.axvline(vl, linestyle='-.', color=color, label='{}% Confidence'.format(int(confidence*100)))
+        plt.axvline(vu, linestyle='-.', color=color, label='{}% Confidence'.format(int(confidence*100)))
 
     # plt.title('1D Gaussian Mixture Model Density')
     plt.xlabel('Data Value')
