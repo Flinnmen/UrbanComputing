@@ -20,6 +20,7 @@ def build_two_segment_env(
 	enters: np.ndarray = None,
 	level_change_weight: np.ndarray = None,
 	region_ids: np.ndarray = None,
+	adjacency_matrix: np.ndarray = None,
 ) -> TrafficMonitorEnv:
 	flow = np.array([
 		[[1.0, 3.0], [3.0, 5.0]],
@@ -46,9 +47,11 @@ def build_two_segment_env(
 		level_change_weight=level_change_weight,
 		region_ids=np.array([0, 1]) if region_ids is None else region_ids,
 	)
+	if adjacency_matrix is None:
+		adjacency_matrix = np.zeros((2, 2))
 	map_structure = MapStructure(
 		node_coordinates=np.array([[0.0, 0.0], [1.0, 0.0]]),
-		adjacency_matrix=np.zeros((2, 2)),
+		adjacency_matrix=adjacency_matrix,
 		grid_xy_of_nodes=np.array([[0, 0], [1, 0]]),
 		grid_id_of_nodes=np.array([0, 1]),
 		grid_xy_to_id={(0, 0): 0, (1, 0): 1},
@@ -117,6 +120,39 @@ class TestMonitorEnvMetrics(unittest.TestCase):
 		self.assertGreater(reward_large, reward_small)
 		self.assertAlmostEqual(info_small['step_metrics']['covered_congestion_level_change'], 1.0)
 		self.assertAlmostEqual(info_large['step_metrics']['covered_weighted_congestion_level_change'], 6.0)
+
+
+	def test_boundary_flow_reward_weights_connected_region_boundaries(self):
+		adjacency = np.array([[0, 1], [1, 0]])
+		env = build_two_segment_env('boundary-flow', adjacency_matrix=adjacency)
+
+		env.reset(seed=1, options={'active_session': 0})
+		_, reward, _, _, info = env.step([DroneAction.STAY.value])
+		metrics = info['step_metrics']
+
+		self.assertEqual(env.boundary_mask.tolist(), [True, True])
+		self.assertAlmostEqual(reward, 6.0)
+		self.assertAlmostEqual(metrics['covered_boundary_flow'], 3.0)
+		self.assertAlmostEqual(metrics['total_boundary_flow'], 8.0)
+
+		episode_metrics = env.aggregate_step_metrics({key: [value] for key, value in metrics.items()})
+		self.assertAlmostEqual(episode_metrics['boundary_flow_coverage_rate'], 3.0 / 8.0)
+
+	def test_boundary_flow_reward_keeps_plain_flow_on_non_boundary_segments(self):
+		adjacency = np.array([[0, 1], [1, 0]])
+		env = build_two_segment_env(
+			'boundary-flow',
+			region_ids=np.array([0, 0]),
+			adjacency_matrix=adjacency,
+		)
+
+		env.reset(seed=1, options={'active_session': 0})
+		_, reward, _, _, info = env.step([DroneAction.STAY.value])
+
+		self.assertEqual(env.boundary_mask.tolist(), [False, False])
+		self.assertAlmostEqual(reward, 3.0)
+		self.assertAlmostEqual(info['step_metrics']['covered_boundary_flow'], 0.0)
+		self.assertAlmostEqual(info['step_metrics']['total_boundary_flow'], 0.0)
 
 	def test_region_mfd_reward_uses_mean_regional_error(self):
 		env = build_two_segment_env('region_mfd')

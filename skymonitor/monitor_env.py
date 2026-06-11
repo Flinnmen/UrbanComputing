@@ -39,6 +39,7 @@ from skytraffic.utils.structure import build_grid_xy_to_id
 logger = logging.getLogger(__name__)
 
 BALANCED_REWARD_KEYS = ('congestion', 'congestion_level', 'mfd', 'region_mfd')
+BOUNDARY_FLOW_WEIGHT = 2.0
 
 
 # make them un-mutable dataclasses for safety
@@ -170,7 +171,7 @@ class TrafficMonitorEnv(gym.Env):
 		seed: int = None,
 	):
 		super().__init__()
-		valid_reward_types = {'congestion', 'mfd', 'congestion_level', 'region_mfd', 'balanced'}
+		valid_reward_types = {'congestion', 'mfd', 'congestion_level', 'region_mfd', 'boundary-flow', 'balanced'}
 		if reward_type not in valid_reward_types:
 			raise ValueError(f"Invalid reward_type {reward_type}. Must be one of {sorted(valid_reward_types)}.")
 		# data container
@@ -238,6 +239,8 @@ class TrafficMonitorEnv(gym.Env):
 			else np.asarray(self.traffic_data.region_ids, dtype=np.int64)
 		)
 		assert self.region_ids.shape == (P,), "region_ids must have shape (num_positions, )."
+		self.boundary_mask = self._compute_boundary_mask()
+		self.boundary_flow_weights = np.where(self.boundary_mask, BOUNDARY_FLOW_WEIGHT, 1.0).astype(np.float32)
 
 		# running states
 		self.step_index: int = 0
@@ -356,6 +359,12 @@ class TrafficMonitorEnv(gym.Env):
 		"""Define the reward based on the current observation."""
 		return self.calculate_step_metrics(observation)['reward']
 
+	def _compute_boundary_mask(self) -> np.ndarray:
+		connected = np.asarray(self.map_structure.adjacency_matrix) > 0
+		connected = connected | connected.T
+		region_diff = self.region_ids[:, None] != self.region_ids[None, :]
+		return (connected & region_diff).any(axis=1)
+
 	def _best_possible_coverage_reward(self, segment_rewards: np.ndarray) -> float:
 		position_rewards = self._reward_coverage_masks @ np.asarray(segment_rewards, dtype=np.float32)
 		k = min(self.num_drones, len(position_rewards))
@@ -386,6 +395,11 @@ class TrafficMonitorEnv(gym.Env):
 		congestion_level_reward_by_location = self.avg_flow_by_location * level_change_weight
 		congestion_level_reward = (coverage * congestion_level_reward_by_location).sum()
 
+		boundary_flow_by_location = flow * self.boundary_flow_weights
+		boundary_flow_reward = (coverage * boundary_flow_by_location).sum()
+		covered_boundary_flow = (coverage * flow * self.boundary_mask).sum()
+		total_boundary_flow = (flow * self.boundary_mask).sum()
+
 		mfd_metrics = calculate_mfd_metrics(
 			flow=flow,
 			density=density,
@@ -409,6 +423,8 @@ class TrafficMonitorEnv(gym.Env):
 			'total_congestion_level_change': float(total_congestion_level_change.item()),
 			'covered_weighted_congestion_level_change': float(covered_weighted_congestion_level_change.item()),
 			'total_weighted_congestion_level_change': float(total_weighted_congestion_level_change.item()),
+			'covered_boundary_flow': float(covered_boundary_flow.item()),
+			'total_boundary_flow': float(total_boundary_flow.item()),
 		}
 		metrics.update(mfd_metrics)
 		metrics.update(region_mfd_metrics)
@@ -435,6 +451,8 @@ class TrafficMonitorEnv(gym.Env):
 			reward = congestion_level_reward
 		elif self.reward_type == 'region_mfd':
 			reward = region_mfd_reward
+		elif self.reward_type == 'boundary-flow':
+			reward = boundary_flow_reward
 		elif self.reward_type == 'balanced':
 			reward = sum(
 				self.balanced_reward_weights[key] * metrics[f'balanced_{key}_score']
@@ -453,6 +471,8 @@ class TrafficMonitorEnv(gym.Env):
 			'total_congestion_level_change': 'sum',
 			'covered_weighted_congestion_level_change': 'sum',
 			'total_weighted_congestion_level_change': 'sum',
+			'covered_boundary_flow': 'sum',
+			'total_boundary_flow': 'sum',
 			'reward': 'sum',
 			'balanced_congestion_score': 'mean',
 			'balanced_congestion_level_score': 'mean',
@@ -502,6 +522,12 @@ class TrafficMonitorEnv(gym.Env):
 			episode_metrics['congestion_level_change_coverage_rate'] = (
 				episode_metrics['covered_congestion_level_change'] / total_change if total_change > 0 else 0.0
 			)
+		if 'covered_boundary_flow' in episode_metrics and 'total_boundary_flow' in episode_metrics:
+			total_flow = episode_metrics['total_boundary_flow']
+			episode_metrics['boundary_flow_coverage_rate'] = (
+				episode_metrics['covered_boundary_flow'] / total_flow if total_flow > 0 else 0.0
+			)
+
 		if (
 			'covered_weighted_congestion_level_change' in episode_metrics
 			and 'total_weighted_congestion_level_change' in episode_metrics
@@ -745,7 +771,7 @@ def build_traffic_monitor_env(
 		env_type (str, optional): type of environment to build. One of 'train', 'test', or 'both'. Defaults to 'train'.
 		norm_obs (bool, optional): whether to normalize observations. Defaults to True.
 		reward_type (str, optional): reward definition. One of 'congestion', 'mfd', 'congestion_level',
-			'region_mfd', or 'balanced'. Defaults to 'congestion'.
+			'region_mfd', 'boundary-flow', or 'balanced'. Defaults to 'congestion'.
 	Returns:
 		Tuple[TrafficMonitorEnv, Optional[TrafficMonitorEnv]]: train and test environments
 	"""
@@ -1112,7 +1138,7 @@ if __name__ == '__main__':
 		'--reward-type',
 		type=str,
 		default='balanced',
-		choices=['congestion', 'mfd', 'congestion_level', 'region_mfd', 'balanced'],
+		choices=['congestion', 'mfd', 'congestion_level', 'region_mfd', 'boundary-flow', 'balanced'],
 		help='Reward definition for evaluation.',
 	)
 	parser.add_argument(
