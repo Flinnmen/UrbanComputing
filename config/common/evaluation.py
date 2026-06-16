@@ -25,7 +25,7 @@ metr_gmm_evaluator = L(MetrGMMEvaluator)(
     data_min=0.0, 
     data_max=70.0,
     gpu=True,
-    ci_pts=500
+    ci_pts=2000
 )
 
 metr_mc_dropout_evaluator = L(MetrMCDropoutEvaluator)(
@@ -78,5 +78,5 @@ simbarca_speed_gmm_evaluator = L(SimBarcaSpeedGMMEvaluator)(
     data_min=0.0, 
     data_max=14.0,
     gpu=True,
-    ci_pts=500
+    ci_pts=2000
 )
