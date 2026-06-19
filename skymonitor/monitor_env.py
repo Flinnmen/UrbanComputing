@@ -171,7 +171,7 @@ class TrafficMonitorEnv(gym.Env):
 		seed: int = None,
 	):
 		super().__init__()
-		valid_reward_types = {'congestion', 'mfd', 'congestion_level', 'region_mfd', 'boundary-flow', 'balanced'}
+		valid_reward_types = {'congestion', 'mfd', 'congestion_level', 'region_mfd', 'boundary_flow', 'balanced'}
 		if reward_type not in valid_reward_types:
 			raise ValueError(f"Invalid reward_type {reward_type}. Must be one of {sorted(valid_reward_types)}.")
 		# data container
@@ -451,7 +451,7 @@ class TrafficMonitorEnv(gym.Env):
 			reward = congestion_level_reward
 		elif self.reward_type == 'region_mfd':
 			reward = region_mfd_reward
-		elif self.reward_type == 'boundary-flow':
+		elif self.reward_type == 'boundary_flow':
 			reward = boundary_flow_reward
 		elif self.reward_type == 'balanced':
 			reward = sum(
@@ -771,7 +771,7 @@ def build_traffic_monitor_env(
 		env_type (str, optional): type of environment to build. One of 'train', 'test', or 'both'. Defaults to 'train'.
 		norm_obs (bool, optional): whether to normalize observations. Defaults to True.
 		reward_type (str, optional): reward definition. One of 'congestion', 'mfd', 'congestion_level',
-			'region_mfd', 'boundary-flow', or 'balanced'. Defaults to 'congestion'.
+			'region_mfd', 'boundary_flow', or 'balanced'. Defaults to 'congestion'.
 	Returns:
 		Tuple[TrafficMonitorEnv, Optional[TrafficMonitorEnv]]: train and test environments
 	"""
@@ -1138,7 +1138,7 @@ if __name__ == '__main__':
 		'--reward-type',
 		type=str,
 		default='balanced',
-		choices=['congestion', 'mfd', 'congestion_level', 'region_mfd', 'boundary-flow', 'balanced'],
+		choices=['congestion', 'mfd', 'congestion_level', 'region_mfd', 'boundary_flow', 'balanced'],
 		help='Reward definition for evaluation.',
 	)
 	parser.add_argument(

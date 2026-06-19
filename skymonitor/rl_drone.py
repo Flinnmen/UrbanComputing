@@ -213,7 +213,7 @@ if __name__ == '__main__':
 		'--reward-type',
 		type=str,
 		default='congestion',
-		choices=['congestion', 'mfd', 'congestion_level', 'region_mfd', 'boundary-flow', 'balanced'],
+		choices=['congestion', 'mfd', 'congestion_level', 'region_mfd', 'boundary_flow', 'balanced'],
 		help='Reward definition for training and evaluation.',
 	)
 	parser.add_argument(

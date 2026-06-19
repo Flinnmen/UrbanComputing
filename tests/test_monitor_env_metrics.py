@@ -124,7 +124,7 @@ class TestMonitorEnvMetrics(unittest.TestCase):
 
 	def test_boundary_flow_reward_weights_connected_region_boundaries(self):
 		adjacency = np.array([[0, 1], [1, 0]])
-		env = build_two_segment_env('boundary-flow', adjacency_matrix=adjacency)
+		env = build_two_segment_env('boundary_flow', adjacency_matrix=adjacency)
 
 		env.reset(seed=1, options={'active_session': 0})
 		_, reward, _, _, info = env.step([DroneAction.STAY.value])
@@ -141,7 +141,7 @@ class TestMonitorEnvMetrics(unittest.TestCase):
 	def test_boundary_flow_reward_keeps_plain_flow_on_non_boundary_segments(self):
 		adjacency = np.array([[0, 1], [1, 0]])
 		env = build_two_segment_env(
-			'boundary-flow',
+			'boundary_flow',
 			region_ids=np.array([0, 0]),
 			adjacency_matrix=adjacency,
 		)
