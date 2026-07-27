@@ -22,9 +22,16 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize, VecMonit
 
 from skytraffic.utils.event_logger import setup_logger
 from skytraffic.utils.io import make_dir_if_not_exist
-from skymonitor.agents import PolicyAgent, RandomAgent, StaticAgent
+from skymonitor.agents import PolicyAgent
 from skymonitor.policy_net import SimpleDronePolicy, GraphDronePolicy, GridDronePolicy
-from skymonitor.monitor_env import build_traffic_monitor_env, TrafficMonitorEnv, eval_on_all_sessions
+from skymonitor.monitor_env import (
+	BALANCED_REWARD_KEYS,
+	build_traffic_monitor_env,
+	TrafficMonitorEnv,
+	eval_agent_repeats,
+	eval_on_all_sessions,
+	load_region_ids_file,
+)
 from skymonitor.simbarca_explore import initialize_dataset
 from skymonitor.visualize import animate_trajectory
 
@@ -64,6 +71,8 @@ class PeriodicEvalCallback(BaseCallback):
 			with torch.no_grad():
 				eval_res = eval_on_all_sessions(self.eval_env, self.agent, seed=int(seed))
 			eval_results['reward'].append(np.mean(eval_res['all_reward']))
+			for key, values in eval_res['all_metrics'].items():
+				eval_results[key].append(np.mean(values))
 
 		stats = {}
 		for key in eval_results:
@@ -93,6 +102,11 @@ def train_monitoring_agent_with_ppo(
 	eval_repeat: int = 5,
 	eval_seed: int = 888,
 	norm_obs: bool = False,
+	reward_type: str = 'congestion',
+	balanced_reward_weights: dict[str, float] = None,
+	congestion_level_thresholds=(0.25, 0.5, 0.75),
+	level_change_weights=(1.0, 2.0, 3.0),
+	region_ids: np.ndarray = None,
 ) -> PPO:
 	"""Train PPO on the monitoring environment with the custom policy."""
 
@@ -107,7 +121,18 @@ def train_monitoring_agent_with_ppo(
 	def _make_env(rank: int):
 		def _init():
 			logger.info(f'Creating environment {rank} with seed {seed + rank}')
-			env = build_traffic_monitor_env(trainset=trainset, testset=None, num_drones=num_drones, env_type='train', norm_obs=norm_obs)
+			env = build_traffic_monitor_env(
+				trainset=trainset,
+				testset=None,
+				num_drones=num_drones,
+				env_type='train',
+				norm_obs=norm_obs,
+				reward_type=reward_type,
+				balanced_reward_weights=balanced_reward_weights,
+				congestion_level_thresholds=congestion_level_thresholds,
+				level_change_weights=level_change_weights,
+				region_ids=region_ids,
+			)
 			env.reset(seed=seed + rank)
 			return env
 		return _init
@@ -141,7 +166,18 @@ def train_monitoring_agent_with_ppo(
 
 	logger.info('Starting PPO training with periodic evaluation callback.')
 	callback = PeriodicEvalCallback(
-		eval_env=build_traffic_monitor_env(trainset=trainset, testset=testset, num_drones=num_drones, env_type='test', norm_obs=norm_obs),
+		eval_env=build_traffic_monitor_env(
+			trainset=trainset,
+			testset=testset,
+			num_drones=num_drones,
+			env_type='test',
+			norm_obs=norm_obs,
+			reward_type=reward_type,
+			balanced_reward_weights=balanced_reward_weights,
+			congestion_level_thresholds=congestion_level_thresholds,
+			level_change_weights=level_change_weights,
+			region_ids=region_ids,
+		),
 		policy=model,
 		eval_freq=eval_freq,
 		eval_repeat=eval_repeat,
@@ -160,7 +196,6 @@ def train_monitoring_agent_with_ppo(
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='Train and evaluate PPO monitoring agent.')
 	parser.add_argument('--eval-only', action='store_true', help='If set, only evaluate the agent without training.')
-	parser.add_argument('--agent-type', type=str, default='ppo', help='Type of agent to use: ppo, random, static.')
 	parser.add_argument('--policy-type', type=str, default='simple', help='Type of policy network to use: simple, graph, grid.')
 	parser.add_argument('--train-timesteps', type=int, default=int(1e6), help='Number of environment steps for PPO training.')
 	parser.add_argument('--num-envs', type=int, default=8, help='Number of parallel environments during training.')
@@ -174,6 +209,41 @@ if __name__ == '__main__':
 	parser.add_argument('--eval-repeat', type=int, default=5, help='Number of evaluation runs.')
 	parser.add_argument('--eval-seed', type=int, default=888, help='Seed for the evaluation environment.')
 	parser.add_argument('--norm-obs', action=argparse.BooleanOptionalAction, default=True, help='Normalize observations, default True. Pass --no-norm-obs to disable.')
+	parser.add_argument(
+		'--reward-type',
+		type=str,
+		default='congestion',
+		choices=['congestion', 'mfd', 'congestion_level', 'region_mfd', 'boundary_flow', 'balanced'],
+		help='Reward definition for training and evaluation.',
+	)
+	parser.add_argument(
+		'--balanced-reward-weights',
+		type=float,
+		nargs=4,
+		default=(0.25, 0.25, 0.25, 0.25),
+		metavar=('A', 'B', 'C', 'D'),
+		help='Balanced reward weights for congestion, congestion_level, mfd, and region_mfd.',
+	)
+	parser.add_argument(
+		'--congestion-level-thresholds',
+		type=float,
+		nargs=3,
+		default=(0.25, 0.5, 0.75),
+		help='Three congestion score thresholds defining levels 1-4.',
+	)
+	parser.add_argument(
+		'--level-change-weights',
+		type=float,
+		nargs=3,
+		default=(1.0, 2.0, 1.0),
+		help='Adjacent weights for congestion level changes 1-2, 2-3, and 3-4.',
+	)
+	parser.add_argument(
+		'--region-ids-file',
+		type=str,
+		default=None,
+		help="Optional .npy or CSV file with a 'cluster' column.",
+	)
 	args = parser.parse_args()
 
 	make_dir_if_not_exist(args.logdir)
@@ -183,8 +253,10 @@ if __name__ == '__main__':
 		level=getattr(logging, args.log_level.upper()),
 	)
 	logger.info('Arguments: {}'.format(args))
+	region_ids = load_region_ids_file(args.region_ids_file) if args.region_ids_file is not None else None
+	balanced_reward_weights = dict(zip(BALANCED_REWARD_KEYS, args.balanced_reward_weights))
 
-	if not args.eval_only and args.agent_type == 'ppo':
+	if not args.eval_only:
 		logger.info('Training PPO monitoring agent.')
 		trained_ppo = train_monitoring_agent_with_ppo(
 			policy_type=args.policy_type,
@@ -199,57 +271,75 @@ if __name__ == '__main__':
 			eval_repeat=args.eval_repeat,
 			eval_seed=args.eval_seed,
 			norm_obs=args.norm_obs,
+			reward_type=args.reward_type,
+			balanced_reward_weights=balanced_reward_weights,
+			congestion_level_thresholds=tuple(args.congestion_level_thresholds),
+			level_change_weights=tuple(args.level_change_weights),
+			region_ids=region_ids,
 		)
 
 	# test the agent
-	logger.info('Evaluating the {} monitoring agent.'.format(args.agent_type))
+	logger.info('Evaluating the PPO monitoring agent.')
 	trainset, testset = initialize_dataset()
 	env: TrafficMonitorEnv = build_traffic_monitor_env(
-		trainset=trainset, testset=testset, num_drones=args.num_drones, env_type='test', norm_obs=args.norm_obs
+		trainset=trainset,
+		testset=testset,
+		num_drones=args.num_drones,
+		env_type='test',
+		norm_obs=args.norm_obs,
+		reward_type=args.reward_type,
+		balanced_reward_weights=balanced_reward_weights,
+		congestion_level_thresholds=tuple(args.congestion_level_thresholds),
+		level_change_weights=tuple(args.level_change_weights),
+		region_ids=region_ids,
 	)
 
-	match args.agent_type:
-		case 'ppo':
-			if not args.eval_only:
-				agent = PolicyAgent(policy=trained_ppo)
-			else:
-				logger.info('Using trained PPO Agent from {}, skipping training.'.format(
-					Path(args.logdir) / '{}'.format(args.save_name)
-				))
-				agent = PolicyAgent(policy=PPO.load(Path(args.logdir) / '{}'.format(args.save_name)))
-		case 'random':
-			logger.info('Using Random Agent, skipping training.')
-			agent = RandomAgent(num_drones=args.num_drones)
-		case _:
-			logger.info('Using Static Agent, skipping training.')
-			agent = StaticAgent(num_drones=args.num_drones)
+	if not args.eval_only:
+		agent = PolicyAgent(policy=trained_ppo)
+	else:
+		logger.info('Using trained PPO Agent from {}, skipping training.'.format(
+			Path(args.logdir) / '{}'.format(args.save_name)
+		))
+		agent = PolicyAgent(policy=PPO.load(Path(args.logdir) / '{}'.format(args.save_name)))
 
-	res_reps = defaultdict(list)
-	rng = np.random.default_rng(args.eval_seed)
-	seeds = rng.choice(10000, size=args.eval_repeat, replace=False)
-	for i in range(args.eval_repeat):
-		with torch.no_grad():
-			eval_res = eval_on_all_sessions(env, agent, seed=int(seeds[i]))
-		res_reps['reward'].append(eval_res['all_reward'])
-		res_reps['trajectories'].append(eval_res['all_trajectories'])
-
-	reward_reps = np.array(res_reps['reward'])  # (eval_repeat, total_sessions)
-	stats = {
-		'avg_reward': reward_reps.mean(axis=1).mean(),
-		'std_reward': reward_reps.mean(axis=1).std(),
-		'avg_reward_per_session': reward_reps.mean(axis=0).tolist(),
-		'std_reward_per_session': reward_reps.std(axis=0).tolist(),
-	}
+	with torch.no_grad():
+		stats, reward_reps, metric_reps, trajectories = eval_agent_repeats(
+			env=env,
+			agent=agent,
+			eval_repeat=args.eval_repeat,
+			eval_seed=args.eval_seed,
+		)
 
 	logger.info('Drone Monitoring Evaluation Results: {}'.format(stats))
 
 	# save eval_results and stats to a json file
 	save_path = Path(args.logdir) / 'rep{}x_results.json'.format(args.eval_repeat)
 	with open(save_path, 'w') as f:
-		json.dump({'stats': stats, 'reward_all_repeats': reward_reps.tolist(), 'trajectories_all_repeats': res_reps['trajectories']}, f, indent=4)
+		json.dump(
+			{
+				'stats': stats,
+				'config': {
+					'policy_type': args.policy_type,
+					'train_timesteps': args.train_timesteps,
+					'num_envs': args.num_envs,
+					'num_drones': args.num_drones,
+					'learning_rate': args.learning_rate,
+					'train_seed': args.train_seed,
+					'eval_repeat': args.eval_repeat,
+					'eval_seed': args.eval_seed,
+					'reward_type': args.reward_type,
+					'balanced_reward_weights': env.balanced_reward_weights,
+				},
+				'reward_all_repeats': reward_reps.tolist(),
+				'metrics_all_repeats': {key: values.tolist() for key, values in metric_reps.items()},
+				'trajectories_all_repeats': trajectories,
+			},
+			f,
+			indent=4,
+		)
 
 	logger.info("Visualizeing the trajectories of some evaluation runs and sessions.")
-	for rep, all_traj in enumerate(res_reps['trajectories']):
+	for rep, all_traj in enumerate(trajectories):
 		if not rep % 5 == 0:
 			continue
 		for session_id, traj in enumerate(all_traj):

@@ -19,13 +19,13 @@ class ForecastModel(nn.Module):
 
     def __init__(
         self,
-        model: BaseModel,
+        network: BaseModel,
         normalizer: nn.Module,
         data_null_value: float,
         metadata: dict = None,
     ):
         super().__init__()
-        self.model = model
+        self.network = network
         self.normalizer = normalizer
         self.data_null_value = data_null_value
 
@@ -54,11 +54,11 @@ class ForecastModel(nn.Module):
 
 
     def preprocess(self, data: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor | None]:
-        source = data["source"].to(self.model.device).clone()
+        source = data["source"].to(self.network.device).clone()
         target = data.get("target")
 
         if target is not None:
-            target = target.to(self.model.device).clone()
+            target = target.to(self.network.device).clone()
             if not np.isfinite(self.data_null_value):
                 target[target.isnan()] = float("nan")
             else:
@@ -69,21 +69,21 @@ class ForecastModel(nn.Module):
         return source, target
 
     def compute_loss(self, source: torch.Tensor, target: torch.Tensor) -> Dict[str, torch.Tensor]:
-        return self.model.compute_loss(source, target)
+        return self.network.compute_loss(source, target)
 
     def inference(self, source: torch.Tensor) -> Dict[str, torch.Tensor]:
-        prediction = self.model.inference(source)
+        prediction = self.network.inference(source)
         prediction = self.normalizer.inverse_transform(prediction)
         if isinstance(prediction, dict):
             return prediction
         return {"pred": prediction}
 
     def adapt_to_metadata(self, metadata):
-        self.model.adapt_to_metadata(metadata)
+        self.network.adapt_to_metadata(metadata)
         self.normalizer.adapt_to_metadata(metadata)
 
     def to(self, device: torch.device | str):
         super().to(device)
-        self.model.to(device)
+        self.network.to(device)
         self.normalizer.to(device)
         return self

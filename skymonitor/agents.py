@@ -75,6 +75,7 @@ class SweepingAgent(BaseAgent):
         self.action_space = spaces.MultiDiscrete(nvec=[len(DroneAction)] * num_drones)
         self.trajectory_plan: List[List[Tuple[int, int]]] = self.build_sweep_scan_plan(sweeping_pos, num_drones)
         self.trajectory_progress: List[int] = [None] * num_drones  # track progress along each drone's trajectory
+        self.trajectory_direction: List[int] = [1] * num_drones
 
     def select_action(self, obs):
         """ Select next actions based on the sweeping-scan plan.
@@ -84,26 +85,27 @@ class SweepingAgent(BaseAgent):
             
             # find where the agents are currently located on the planned trajectory
             agent_pos = (int(obs['positions_x'][agent_id]), int(obs['positions_y'][agent_id]))
+            trajectory = self.trajectory_plan[agent_id]
+            if len(trajectory) <= 1:
+                actions.append(DroneAction.STAY)
+                self.trajectory_progress[agent_id] = 0 if trajectory else None
+                continue
+
             agent_progress = self.trajectory_progress[agent_id]
             if agent_progress is None:
-                agent_progress = self.trajectory_plan[agent_id].index(agent_pos)
+                agent_progress = trajectory.index(agent_pos)
                 self.trajectory_progress[agent_id] = agent_progress
 
-            if agent_progress < len(self.trajectory_plan[agent_id]) - 1:
-                next_pos = self.trajectory_plan[agent_id][agent_progress + 1]
-                direction = (next_pos[0] - agent_pos[0], next_pos[1] - agent_pos[1])
-                action = DirectionToAction[direction]
-                actions.append(action)
-                self.trajectory_progress[agent_id] = agent_progress + 1
+            next_progress = agent_progress + self.trajectory_direction[agent_id]
+            if next_progress < 0 or next_progress >= len(trajectory):
+                self.trajectory_direction[agent_id] *= -1
+                next_progress = agent_progress + self.trajectory_direction[agent_id]
 
-            elif agent_progress == len(self.trajectory_plan[agent_id]) - 1:
-                # revert the trajectory and go backward to the starting point
-                self.trajectory_plan[agent_id] = list(reversed(self.trajectory_plan[agent_id]))
-                next_pos = self.trajectory_plan[agent_id][1]
-                direction = (next_pos[0] - agent_pos[0], next_pos[1] - agent_pos[1])
-                action = DirectionToAction[direction]
-                actions.append(action)
-                self.trajectory_progress[agent_id] = 1
+            next_pos = trajectory[next_progress]
+            direction = (next_pos[0] - agent_pos[0], next_pos[1] - agent_pos[1])
+            action = DirectionToAction[direction]
+            actions.append(action)
+            self.trajectory_progress[agent_id] = next_progress
 
         return actions
 
@@ -111,6 +113,7 @@ class SweepingAgent(BaseAgent):
         """ Clear any internal state if necessary.
         """
         self.trajectory_progress = [None] * self.num_drones
+        self.trajectory_direction = [1] * self.num_drones
     
     @staticmethod
     def build_sweep_scan_plan(grid_xy: np.ndarray, num_drones: int) -> List[List[Tuple[int, int]]]:

@@ -29,7 +29,7 @@ dataloader.test = L(DataLoader)(
 )
 
 model = L(ForecastModel)(
-    model=L(STIDNet)(
+    network=L(STIDNet)(
         time_intervals=300,
         num_block=2,
         time_series_emb_dim=64,

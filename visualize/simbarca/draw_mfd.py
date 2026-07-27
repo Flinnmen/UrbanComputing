@@ -3,6 +3,8 @@
 import os 
 import glob
 import pickle
+import argparse
+from functools import partial
 
 import seaborn
 seaborn.set_style('darkgrid')
@@ -18,8 +20,73 @@ from multiprocessing import Pool
 # length of all road segments
 ALL_LENGTHS = pd.read_csv("datasets/simbarca/metadata/link_bboxes_clustered.csv")[['id', 'length']].set_index('id')
 TOTAL_LENGTH = ALL_LENGTHS['length'].sum()
+REGION_IDS_FILE = "skymonitor/clusters4_Is.txt"
 with open("datasets/simbarca/metadata/sections_of_interest.txt", "r") as f:
     IDS_OF_INTEREST = [int(x) for x in f.read().split(",")]
+
+def _load_region_ids(region_ids_file):
+    region_ids = pd.read_csv(region_ids_file, sep=r"\s+", header=None, names=['id', 'region'])
+    return region_ids.set_index('id')['region']
+
+def _regional_flow_density_3min(vdist_3min, vtime_3min, region_ids_file=REGION_IDS_FILE):
+    """Compute 3-minute flow and density by region."""
+    region_ids = _load_region_ids(region_ids_file)
+    section_ids = pd.Index(vdist_3min.columns)
+    region_ids = region_ids.loc[section_ids]
+
+    regional_values = []
+    for region_id in sorted(region_ids.unique()):
+        region_sections = section_ids[region_ids == region_id]
+        region_length = ALL_LENGTHS.loc[region_sections, 'length'].sum()
+        flow = vdist_3min[region_sections].sum(axis=1).values / (180 * region_length)
+        density = vtime_3min[region_sections].sum(axis=1).values / (180 * region_length)
+        regional_values.append((region_id, flow, density))
+
+    return regional_values
+
+def _plot_region_mfd_flow_density(regional_values, fig_dir):
+    time_step_3min = np.arange(len(regional_values[0][1])) * 180 / 60 # to convert to minutes
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    for region_id, flow, density in regional_values:
+        axes[0].plot(density, flow, label='Region {}'.format(region_id))
+    axes[0].set_xlabel('Vehicle Density (veh/m)')
+    axes[0].set_ylabel('Vehicle Flow (veh/s)')
+    axes[0].legend()
+    axes[0].set_title('MFD by Region')
+
+    for region_id, flow, _ in regional_values:
+        axes[1].plot(time_step_3min, flow, label='Region {}'.format(region_id))
+    axes[1].set_xlabel('Time (min)')
+    axes[1].set_ylabel('Vehicle Flow (veh/s)')
+    axes[1].set_title('Regional Vehicle Flow')
+
+    for region_id, _, density in regional_values:
+        axes[2].plot(time_step_3min, density, label='Region {}'.format(region_id))
+    axes[2].set_xlabel('Time (min)')
+    axes[2].set_ylabel('Vehicle Density (veh/m)')
+    axes[2].set_title('Regional Vehicle Density')
+
+    fig.tight_layout()
+    fig.savefig('{}/MFD_by_region.pdf'.format(fig_dir))
+    plt.close(fig)
+
+def _draw_mfd_by_region(folder, region_ids_file=REGION_IDS_FILE):
+    file_path = "{}/timeseries/agg_timeseries.pkl".format(folder)
+    fig_dir = "{}/figures".format(folder)
+    if not os.path.exists(fig_dir):
+        os.makedirs(fig_dir)
+
+    with open(file_path, 'rb') as f:
+        data = pickle.load(f)
+
+    regional_values = _regional_flow_density_3min(
+        data['pred_vdist'],
+        data['pred_vtime'],
+        region_ids_file,
+    )
+    _plot_region_mfd_flow_density(regional_values, fig_dir)
+    return data
 
 def _draw_mfd(folder):
     
@@ -158,14 +225,33 @@ def draw_mfd(folder):
         print(e)
         return None
 
+def draw_mfd_by_region(folder, region_ids_file=REGION_IDS_FILE):
+    """Draw regional MFD for a given folder, but go to the next one if there is an error."""
+    try:
+        data = _draw_mfd_by_region(folder, region_ids_file)
+        return data
+    except Exception as e:
+        print("Error in folder: {}".format(folder))
+        print(e)
+        return None
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--by-region", action="store_true", help="Also draw MFDs by region.")
+    parser.add_argument("--region-ids-file", default=REGION_IDS_FILE, help="Path to section-to-region mapping.")
+    args = parser.parse_args()
     
     all_folders = sorted(glob.glob("datasets/simbarca/simulation_sessions/session_*"))
+
     # add TQDM for progress bar
     with Pool(processes=8) as pool:
-        all_data = list(tqdm(pool.imap(draw_mfd, all_folders), total=len(all_folders)))
+        if args.by_region:
+            draw_fn = partial(draw_mfd_by_region, region_ids_file=args.region_ids_file)
+            all_data = list(tqdm(pool.imap(draw_fn, all_folders), total=len(all_folders)))
+        else:
+            all_data = list(tqdm(pool.imap(draw_mfd, all_folders), total=len(all_folders)))
         
-    if all_data is not None:
+    if not args.by_region and all_data is not None:
         # now we take all the MFDs and plot them together
         print("Plotting all MFDs together in one figure")
         fig, ax = plt.subplots(figsize=(5, 4))

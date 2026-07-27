@@ -29,7 +29,7 @@ dataloader.test = L(DataLoader)(
 )
 
 model = L(ForecastModel)(
-    model=L(LSTMGCNConv)(
+    network=L(LSTMGCNConv)(
         use_global=True,
         d_model=64,
         global_downsample_factor=1,

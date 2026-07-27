@@ -30,7 +30,7 @@ dataloader.test = L(DataLoader)(
 )
 
 model = L(ForecastModel)(
-    model=L(STAEformer)(
+    network=L(STAEformer)(
         steps_per_day=288,
         input_dim=1,
         output_dim=1,

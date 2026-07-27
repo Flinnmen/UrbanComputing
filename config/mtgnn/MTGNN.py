@@ -29,7 +29,7 @@ dataloader.test = L(DataLoader)(
 )
 
 model = L(ForecastModel)(
-    model=L(MTGNN)(
+    network=L(MTGNN)(
         gcn_true=True,
         buildA_true=True,
         gcn_depth=2,

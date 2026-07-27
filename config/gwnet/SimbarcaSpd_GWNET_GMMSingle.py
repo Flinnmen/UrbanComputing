@@ -11,5 +11,5 @@ from .SimbarcaSpd_GWNET_GMM import (
 # Override train settings
 train.output_dir = "scratch/simbarcaspd_gwnet_gmm_single"
 
-model.model.anchors = [0.0]
-model.model.sizes = [3.0] 
+model.network.anchors = [0.0]
+model.network.sizes = [3.0] 
