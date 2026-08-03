@@ -1,13 +1,13 @@
 from omegaconf import OmegaConf
 from copy import deepcopy
 from skytraffic.config import LazyCall as L
-from skytraffic.data.datasets import MetrDataset
+from skytraffic.models import TensorDataNormalizer
 from torch.utils.data import DataLoader
 
-from skymonitor.patch_lgc import PatchedMVLSTMGCNConv
+from skymonitor.patch_lgc import PatchLGCForecastModel, PatchedMVLSTMGCNConv
 from skymonitor.simbarca_explore import SimBarcaExplore
 from skymonitor.simbarca_explore_evaluation import SimBarcaExploreEvaluator
-from skymonitor.augment import RandomGridCoverage, RandomWalkCoverage
+from skymonitor.augment import RandomWalkCoverage
 
 from ..config.common.train import train
 from ..config.common.optim import AdamW as optimizer
@@ -56,21 +56,26 @@ dataloader.test = L(DataLoader)(
     collate_fn=None
 )
 
-model = L(PatchedMVLSTMGCNConv)(
-    use_cvg_mask=True,
-    use_global=True,
-    feature_dim=4,
-    d_model=64,
-    temp_patching=1,
-    global_downsample_factor=1,
-    layernorm=True,
-    adjacency_hop=5,
-    dropout=0.1,
-    input_steps=10,
-    pred_steps=10,
-    num_nodes=1570,
-    pred_feat=2,
+model = L(PatchLGCForecastModel)(
+    network=L(PatchedMVLSTMGCNConv)(
+        use_cvg_mask=True,
+        use_global=True,
+        feature_dim=4,
+        d_model=64,
+        temp_patching=1,
+        global_downsample_factor=1,
+        layernorm=True,
+        adjacency_hop=5,
+        dropout=0.1,
+        input_steps=10,
+        pred_steps=10,
+        num_nodes=1570,
+        pred_feat=2,
+        metadata="${..metadata}",
+    ),
+    normalizer=L(TensorDataNormalizer)(),
     data_null_value=float("nan"),
+    metadata=None,
 )
 
 evaluator = L(SimBarcaExploreEvaluator)(
@@ -78,7 +83,7 @@ evaluator = L(SimBarcaExploreEvaluator)(
     save_dir="${train.output_dir}/evaluation",
     collect_pred=["pred"],
     collect_data=["target"],
-    ignore_value=0.0,
+    ignore_value=float("nan"),
     eval_speed=False,
     num_repeat=5,
 )
