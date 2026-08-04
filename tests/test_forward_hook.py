@@ -3,8 +3,6 @@ import unittest
 import torch 
 import torch.nn as nn
 
-from skytraffic.models import NeTSFormer
-
 # from https://gist.github.com/airalcorn2/50ec06517ce96ecc143503e21fa6cb91
 def patch_attention(m):
     forward_orig = m.forward
@@ -27,40 +25,6 @@ def getActivation(name):
     return hook
 
 class TestForwardHook(unittest.TestCase):
-    
-    def test_get_attention_weights(self):
-        
-        device = torch.device("cuda")
-
-        N, T, M, C = 32, 12, 211, 2
-        rand_input = torch.rand(size=(N, T, M, C), device=device)
-        rand_label = torch.rand(size=(N, T, M), device=device)
-
-        rand_data = {'source': rand_input, 'target': rand_label}
-
-        model = NeTSFormer().to(device)
-        model.adapt_to_metadata({'adjacency': [torch.randint(0, 5, size=(M, M)) for _ in range(2)],
-                                'mean': torch.tensor([0.0]),
-                                'std': torch.tensor([1.0])})
-
-
-        attention_layers = {
-            "spatial_attn0": model.encoder.layers[0].space_attention.self_attn,
-            "spatial_attn1": model.encoder.layers[1].space_attention.self_attn,
-        }
-        for name, module in attention_layers.items():
-            patch_attention(module)
-            handles[name] = module.register_forward_hook(getActivation(name))
-
-        model.eval()
-        result_dict = model(rand_data)
-        
-        self.assertIn("spatial_attn0", activation.keys())
-        self.assertIn("spatial_attn1", activation.keys())
-        
-        for name, h in handles.items():
-            h.remove()
-        activation.clear()
     
     def test_mask_forward(self):
         

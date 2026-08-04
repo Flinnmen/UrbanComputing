@@ -36,6 +36,7 @@ dependencies = [
 rl = [
   "stable-baselines3[extra]",
   "gymnasium",
+  "bayesian-optimization",
 ]
 
 [tool.setuptools]

@@ -79,6 +79,49 @@ def get_congestion_change(congestion_score: np.ndarray, entry_thd: float, exit_t
 
     return state, enters, exits
 
+
+def get_congestion_level(
+    congestion_score: np.ndarray,
+    thresholds: tuple[float, float, float] = (0.25, 0.5, 0.75),
+) -> np.ndarray:
+    """Map congestion scores to four congestion levels from 1 to 4."""
+    assert congestion_score.ndim == 3, "Expected congestion_score with shape (S, T, P)."
+    thresholds = np.asarray(thresholds, dtype=float)
+    assert thresholds.shape == (3,), "Expected three thresholds for four congestion levels."
+    assert np.all(np.diff(thresholds) > 0), "Congestion level thresholds must be strictly increasing."
+    return (np.digitize(congestion_score, thresholds, right=False) + 1).astype(np.int8)
+
+
+def get_congestion_level_change(
+    congestion_level: np.ndarray,
+    weights: tuple[float, float, float] = (1.0, 2.0, 1.0),
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute one-step congestion level changes and weighted change magnitudes."""
+    assert congestion_level.ndim == 3, "Expected congestion_level with shape (S, T, P)."
+    weights = np.asarray(weights, dtype=np.float32)
+    assert weights.shape == (3,), "Expected three adjacent transition weights for four levels."
+
+    S, T, P = congestion_level.shape
+    level_change = np.zeros((S, T, P), dtype=bool)
+    level_change_weight = np.zeros((S, T, P), dtype=np.float32)
+    if T <= 1:
+        return level_change, level_change_weight
+
+    current = congestion_level[:, :-1, :]
+    next_level = congestion_level[:, 1:, :]
+    low = np.minimum(current, next_level)
+    high = np.maximum(current, next_level)
+    changed = low != high
+    one_step_weight = np.zeros_like(current, dtype=np.float32)
+    # a change from level 1 to 4 gets all three rewards, 1->2, 2->3 and 3->4
+    for level in range(1, 4):
+        one_step_weight += ((low <= level) & (high > level)) * weights[level - 1]
+
+    level_change[:, :-1, :] = changed
+    level_change_weight[:, :-1, :] = one_step_weight
+
+    return level_change, level_change_weight
+
 if __name__ == "__main__":
 
     from skymonitor.visualize import visualize_map_scores
@@ -88,7 +131,7 @@ if __name__ == "__main__":
     parser.add_argument('--density-threshold', type=float, default=1e-3, help='Minimum density to compute speed; lower values treated as empty.')
     parser.add_argument('--ff-quantile', type=float, default=0.85, help='Quantile used to estimate free-flow speed per segment. 1.0 means maximum observed speed.')
     parser.add_argument('--entry-thd', type=float, default=0.5, help='Congestion entry threshold. Value above is considered congested.')
-    parser.add_argument('--exit-thd', type=float, default=0.7, help='Congestion exit threshold. Value below is not congested.')
+    parser.add_argument('--exit-thd', type=float, default=0.4, help='Congestion exit threshold. Value below is not congested.')
     args = parser.parse_args()
 
     trainset, test_set = initialize_dataset()

@@ -4,6 +4,7 @@ from typing import Dict, List, Tuple
 from collections import defaultdict
 from abc import ABC, abstractmethod
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -165,3 +166,138 @@ class BaseEvaluator(ABC):
         
         if verbose:
             logger.info(f"Overall average {note}: {self.metrics_scalar[note]:.4f}")
+
+    def valid_target_mask(self, target: torch.Tensor) -> torch.Tensor:
+        valid = ~target.isnan()
+        if not np.isnan(self.ignore_value):
+            valid = valid & (target != self.ignore_value)
+        return valid
+
+    def add_scores_to_accumulator(
+        self,
+        score_sums_per_horizon: Dict[str, torch.Tensor],
+        score_counts_per_horizon: Dict[str, torch.Tensor],
+        name: str,
+        scores: torch.Tensor,
+        valid: torch.Tensor,
+    ) -> None:
+        scores = scores.detach().cpu().to(torch.float64)
+        valid = valid.detach().cpu()
+        if name not in score_sums_per_horizon:
+            score_sums_per_horizon[name] = torch.zeros(scores.shape[1], dtype=torch.float64)
+            score_counts_per_horizon[name] = torch.zeros(scores.shape[1], dtype=torch.float64)
+
+        score_sums_per_horizon[name] += torch.where(valid, scores, torch.zeros_like(scores)).sum(dim=(0, 2))
+        score_counts_per_horizon[name] += valid.sum(dim=(0, 2)).to(torch.float64)
+
+    def weighted_mean_by_horizon(
+        self,
+        score_sums_per_horizon: Dict[str, torch.Tensor],
+        score_counts_per_horizon: Dict[str, torch.Tensor],
+        name: str,
+        empty_value: float = float("nan"),
+    ) -> List[float]:
+        values = torch.full_like(score_sums_per_horizon[name], empty_value)
+        valid = score_counts_per_horizon[name] > 0
+        values[valid] = score_sums_per_horizon[name][valid] / score_counts_per_horizon[name][valid]
+        return values.cpu().numpy().tolist()
+
+    def store_weighted_score(
+        self,
+        score_sums_per_horizon: Dict[str, torch.Tensor],
+        score_counts_per_horizon: Dict[str, torch.Tensor],
+        name: str,
+        verbose: bool = False,
+    ) -> None:
+        self.metrics_vector[name] = self.weighted_mean_by_horizon(
+            score_sums_per_horizon,
+            score_counts_per_horizon,
+            name,
+        )
+        if score_counts_per_horizon[name].sum() > 0:
+            self.metrics_scalar[name] = (
+                score_sums_per_horizon[name].sum() / score_counts_per_horizon[name].sum()
+            ).item()
+        else:
+            self.metrics_scalar[name] = float("nan")
+
+        if verbose:
+            logger.info(f"Overall average {name}: {self.metrics_scalar[name]:.4f}")
+
+    def add_common_prediction_scores(
+        self,
+        score_sums_per_horizon: Dict[str, torch.Tensor],
+        score_counts_per_horizon: Dict[str, torch.Tensor],
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        valid: torch.Tensor,
+    ) -> None:
+        pred = pred.detach().cpu()
+        target = target.detach().cpu()
+        valid = valid.detach().cpu()
+
+        if torch.isnan(pred).any():
+            logger.warning(f"number of nan in model predictions: {torch.sum(torch.isnan(pred)).item()}")
+
+        error = pred - target
+        self.add_scores_to_accumulator(score_sums_per_horizon, score_counts_per_horizon, "mae", error.abs(), valid)
+        self.add_scores_to_accumulator(score_sums_per_horizon, score_counts_per_horizon, "mse", error.pow(2), valid)
+
+        mape_valid = valid
+        if self.mape_threshold is not None:
+            mape_valid = mape_valid & (target.abs() > self.mape_threshold)
+        mape = torch.zeros_like(target)
+        mape[mape_valid] = (error[mape_valid] / target[mape_valid]).abs()
+        self.add_scores_to_accumulator(score_sums_per_horizon, score_counts_per_horizon, "mape", mape, mape_valid)
+
+    def store_common_prediction_scores(
+        self,
+        score_sums_per_horizon: Dict[str, torch.Tensor],
+        score_counts_per_horizon: Dict[str, torch.Tensor],
+        verbose: bool = False,
+    ) -> None:
+        self.metrics_vector["mae"] = self.weighted_mean_by_horizon(
+            score_sums_per_horizon,
+            score_counts_per_horizon,
+            "mae",
+            empty_value=0.0,
+        )
+        self.metrics_vector["mape"] = self.weighted_mean_by_horizon(
+            score_sums_per_horizon,
+            score_counts_per_horizon,
+            "mape",
+            empty_value=0.0,
+        )
+        rmse = torch.tensor(
+            self.weighted_mean_by_horizon(score_sums_per_horizon, score_counts_per_horizon, "mse")
+        )
+        self.metrics_vector["rmse"] = torch.sqrt(rmse).numpy().tolist()
+        self.metrics_scalar.update(
+            self.average_metrics(
+                {
+                    "mae": self.metrics_vector["mae"],
+                    "mape": self.metrics_vector["mape"],
+                    "rmse": self.metrics_vector["rmse"],
+                },
+                verbose=verbose,
+            )
+        )
+
+    def compute_interval_calibration_metrics(self, confs: List[float], verbose: bool = False):
+        CCE_conf_horizon, AW_conf_horizon = [], []
+
+        for conf in confs:
+            CCE_conf_horizon.append([abs(x - conf) for x in self.metrics_vector[f"CI_COVER_{conf}"]])
+            AW_conf_horizon.append(self.metrics_vector[f"CI_WIDTH_{conf}"])
+
+        mCCE_horizon = np.stack(CCE_conf_horizon, axis=-1).mean(axis=-1)
+        mAW_horizon = np.stack(AW_conf_horizon, axis=-1).mean(axis=-1)
+
+        self.metrics_scalar["mCCE"] = mCCE_horizon.mean().item()
+        self.metrics_scalar["mAW"] = mAW_horizon.mean().item()
+        self.metrics_vector["mCCE"] = mCCE_horizon.tolist()
+        self.metrics_vector["mAW"] = mAW_horizon.tolist()
+
+        if verbose:
+            logger.info(f"Mean Confidence Calibration Error (mCCE): {self.metrics_scalar['mCCE']:.4f}")
+            logger.info(f"Mean Average Width (mAW): {self.metrics_scalar['mAW']:.4f}")

@@ -64,7 +64,6 @@ class SimBarcaGMMEvaluator(SimBarcaEvaluator):
         super().__init__(ignore_value, mape_threshold, save_dir)
         if add_output_seq is not None:  # overwrite the default if provided
             self.add_output_seq = add_output_seq
-        self.sp_size = 20  # the size of the chunks to split the tensors space dimension, default 10
         self.gpu = True  # whether to use GPU acceleration, default True
 
     
@@ -180,16 +179,15 @@ class SimBarcaGMMEvaluator(SimBarcaEvaluator):
         This function evaluates the confidence interval of the GMM prediction.
         """
         xs = torch.linspace(self.data_min["seg"], self.data_max["seg"], self.ci_pts)
-        tensors = [all_preds["seg_mixing"], all_preds["seg_means"], all_preds["seg_log_var"], all_data["pred_speed"]]
-        tensor_names = ["mixing", "means", "log_var", "gt"]
 
         for conf in self.eval_confs:
             within_ci, interval_width = gmm_interval_coverage_and_width(
-                tensors=tensors,
-                tensor_names=tensor_names,
+                mixing=all_preds["seg_mixing"],
+                means=all_preds["seg_means"],
+                log_var=all_preds["seg_log_var"],
+                gt=all_data["pred_speed"],
                 xs=xs,
                 conf=conf,
-                sp_size=self.sp_size,
                 gpu=self.gpu,
             )
 
@@ -232,7 +230,6 @@ class SimBarcaGMMEvaluator(SimBarcaEvaluator):
                     log_var=all_preds["seg_log_var"],
                     xs=cdf_xs,
                     gt=all_data["pred_speed"],
-                    sp_size=self.sp_size,
                     gpu=self.gpu,
                 ),
                 all_data["pred_speed"],

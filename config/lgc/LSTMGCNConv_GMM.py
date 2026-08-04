@@ -12,7 +12,7 @@ from .LSTMGCNConv import dataset, dataloader
 train.output_dir = "scratch/metr_lgc_gmm"
 
 model = L(ForecastModel)(
-    model=L(LSTMGCNConv_GMM)(
+    network=L(LSTMGCNConv_GMM)(
         use_global=True,
         d_model=64,
         global_downsample_factor=1,

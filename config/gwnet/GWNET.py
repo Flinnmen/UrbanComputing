@@ -29,7 +29,7 @@ dataloader.test = L(DataLoader)(
 )
 
 model = L(ForecastModel)(
-    model=L(GWNET)(
+    network=L(GWNET)(
         dropout=0.3,
         blocks=4,
         layers=2,

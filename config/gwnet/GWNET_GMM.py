@@ -12,7 +12,7 @@ from .GWNET import dataset, dataloader
 train.output_dir = "scratch/metr_gwnet_gmm"
 
 model = L(ForecastModel)(
-    model=L(GWNET_GMM)(
+    network=L(GWNET_GMM)(
         dropout=0.3,
         blocks=4,
         layers=2,
@@ -32,6 +32,7 @@ model = L(ForecastModel)(
         anchors=[-2.0, -1.0, 0.0, 1.0, 2.0],
         sizes=[1.0, 1.0, 1.0, 1.0, 1.0],
         zero_init=True,
+        feature_projection=True,
         mcd_estimation=False,
         input_steps=MetrDataset.input_steps,
         pred_steps=MetrDataset.pred_steps,

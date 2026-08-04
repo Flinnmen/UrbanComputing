@@ -18,7 +18,7 @@ from ..common.evaluation import simbarca_speed_evaluator as evaluator
 from skytraffic.data.datasets import SimBarcaSpeed
 
 train.output_dir = "scratch/simbarcaspd_gwnet"
-model.model.num_nodes = SimBarcaSpeed.num_nodes
-model.model.input_steps = SimBarcaSpeed.input_steps
-model.model.pred_steps = SimBarcaSpeed.pred_steps
+model.network.num_nodes = SimBarcaSpeed.num_nodes
+model.network.input_steps = SimBarcaSpeed.input_steps
+model.network.pred_steps = SimBarcaSpeed.pred_steps
 model.data_null_value = SimBarcaSpeed.data_null_value 

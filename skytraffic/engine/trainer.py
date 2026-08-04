@@ -38,7 +38,10 @@ class DefaultTrainer(TrainerBase):
             logger.info("Checkpoint does not exist, train from scratch instead. Given Path: {}".format(ckpt_path if ckpt_path else None))
             return
 
-        state_dict: dict = torch.load(ckpt_path)
+        # Project checkpoints can contain non-tensor metadata from optimizer,
+        # scheduler, hooks, or config objects. PyTorch 2.6 defaults to
+        # weights_only=True, so trusted project checkpoints need the legacy load.
+        state_dict: dict = torch.load(ckpt_path, weights_only=False)
         return state_dict
         
     def load_checkpoint(self, ckpt_path: str, resume=False):

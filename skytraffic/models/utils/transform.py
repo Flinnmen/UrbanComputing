@@ -55,6 +55,19 @@ class GMMTensorDataNormalizer(TensorDataNormalizer):
         prediction["log_var"] = prediction["log_var"] + 2 * torch.log(self.std)
         return prediction
 
+
+class QuantileTensorDataNormalizer(TensorDataNormalizer):
+    """Normalize tensors like TensorDataNormalizer and inverse-scale quantile outputs."""
+
+    def inverse_transform(self, data, datadim_only: bool = False):
+        if not isinstance(data, dict):
+            return super().inverse_transform(data, datadim_only=datadim_only)
+
+        prediction = dict(data)
+        prediction["pred"] = super().inverse_transform(prediction["pred"], datadim_only=datadim_only)
+        prediction["quantiles"] = super().inverse_transform(prediction["quantiles"], datadim_only=datadim_only)
+        return prediction
+
 class TensorDataScaler:
     """
     normalize the data, a simplified version of sklearn.preprocessing.StandardScaler

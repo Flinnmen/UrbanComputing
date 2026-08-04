@@ -12,7 +12,7 @@ from .STID import dataset, dataloader
 train.output_dir = "scratch/metr_stid_gmm"
 
 model = L(ForecastModel)(
-    model=L(STIDGMMNet)(
+    network=L(STIDGMMNet)(
         time_intervals=300,
         num_block=2,
         time_series_emb_dim=64,

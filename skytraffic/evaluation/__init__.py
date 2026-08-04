@@ -1,7 +1,7 @@
 from .base_evaluator import BaseEvaluator
 from .metr_evaluation import MetrEvaluator
 from .metr_gmm_evaluation import MetrGMMEvaluator
+from .metr_uncertainty_evaluation import MetrConformalEvaluator, MetrMCDropoutEvaluator, MetrQuantileEvaluator
 from .simbarca_evaluation import SimBarcaEvaluator
 from .simbarca_gmm_evaluation import SimBarcaGMMEvaluator
 from .simbarcaspd_evaluation import SimBarcaSpeedEvaluator, SimBarcaSpeedGMMEvaluator
-

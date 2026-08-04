@@ -94,6 +94,37 @@ class TestGMM(unittest.TestCase):
         xs = torch.linspace(xmin, xmax, n_points)
         lb, ub = GMMPredictionHead.get_confidence_interval(mixing, means, log_var, xs, 0.70)
         pass 
+
+    def test_feature_projection_toggle(self):
+        N, P, in_dim = 2, 4, 3
+        pred_steps = 5
+        anchors = [-1.0, 0.0, 1.0]
+        sizes = [1.0, 1.0, 1.0]
+
+        default_head = GMMPredictionHead(
+            in_dim=in_dim,
+            hid_dim=7,
+            anchors=anchors,
+            sizes=sizes,
+            pred_steps=pred_steps,
+        )
+        self.assertTrue(isinstance(default_head.projection, torch.nn.Linear))
+
+        no_projection_head = GMMPredictionHead(
+            in_dim=in_dim,
+            hid_dim=7,
+            anchors=anchors,
+            sizes=sizes,
+            pred_steps=pred_steps,
+            feature_projection=False,
+        )
+        self.assertTrue(isinstance(no_projection_head.projection, torch.nn.Identity))
+
+        mixing, means, log_var = no_projection_head(torch.randn(N, P, in_dim))
+        expected_shape = (N, pred_steps, P, len(anchors))
+        self.assertEqual(mixing.shape, expected_shape)
+        self.assertEqual(means.shape, expected_shape)
+        self.assertEqual(log_var.shape, expected_shape)
         
 
     def test_forward(self):

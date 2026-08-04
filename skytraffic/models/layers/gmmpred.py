@@ -31,12 +31,14 @@ class GMMPredictionHead(nn.Module):
         sizes: List[float],
         pred_steps: int = 10,
         dropout=0.1,
+        feature_projection: bool = True,
         zero_init=True,
         mcd_estimation=False,
     ):
         super().__init__()
         self.pred_steps = pred_steps
         self.zero_init = zero_init
+        self.feature_projection = feature_projection
         self.mcd_estimation = mcd_estimation # whether to use maximum a posteriori (MAP) estimation
         self.num_component = len(anchors)
         # the anchors are prioir knowledge for the mean 
@@ -45,23 +47,27 @@ class GMMPredictionHead(nn.Module):
         self.sizes = nn.Parameter(torch.tensor(sizes).reshape(1, 1, 1, -1), requires_grad=False)
         self.size_scale = nn.Parameter(torch.zeros_like(self.sizes).reshape(1, 1, 1, -1), requires_grad=True)
          
-        self.linear = nn.Linear(in_features=in_dim, out_features=hid_dim)
-        self.norm = nn.LayerNorm(hid_dim)
+        feature_dim = hid_dim if self.feature_projection else in_dim
+        if self.feature_projection:
+            self.projection = nn.Linear(in_features=in_dim, out_features=hid_dim)
+        else: 
+            self.projection = nn.Identity()
+        self.norm = nn.LayerNorm(feature_dim)
         self.relu_act = nn.ReLU()
         self.dropout = nn.Dropout(dropout)
         # `mixing` coefficients of the Gaussian components, and `offset` with respect to the anchor. 
         # component_mean = anchor + dx * sizes * (1 + size_scale)
         # gmm_mean = (component_mean * mixing).mean()
         # each of them predicted for 10 future steps, so output 2x size in the deterministic case
-        self.mixing = nn.Linear(in_features=hid_dim, out_features=pred_steps * len(anchors))
-        self.offset = nn.Linear(in_features=hid_dim, out_features=pred_steps * len(anchors))
-        self.uncertainty = nn.Linear(in_features=hid_dim, out_features=pred_steps * len(anchors))
+        self.mixing = nn.Linear(in_features=feature_dim, out_features=pred_steps * len(anchors))
+        self.offset = nn.Linear(in_features=feature_dim, out_features=pred_steps * len(anchors))
+        self.uncertainty = nn.Linear(in_features=feature_dim, out_features=pred_steps * len(anchors))
     
         if self.zero_init:
             self.init_weights()
 
     def extra_repr(self):
-        return f"dropout={self.dropout}, zero_init={self.zero_init}"
+        return f"dropout={self.dropout}, feature_projection={self.feature_projection}, zero_init={self.zero_init}"
     
     @property
     def device(self):
@@ -69,7 +75,7 @@ class GMMPredictionHead(nn.Module):
     
     def forward(self, x:torch.Tensor):
         # After feature extraction: x.shape=(N, P, C)
-        x = self.linear(x)
+        x = self.projection(x)
         x = self.norm(x)
         x = self.relu_act(x)
         x = self.dropout(x)
