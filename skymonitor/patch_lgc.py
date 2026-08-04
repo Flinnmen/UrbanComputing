@@ -1,19 +1,48 @@
-from typing import Dict, Tuple
+from typing import Dict
 
 import torch
 import torch.nn as nn
 import torch_geometric.nn as gnn
 
-import numpy as np
 from einops import rearrange
 
-from skytraffic.models.utils.transform import TensorDataScaler
 from skytraffic.models.layers import MLP, LearnedPositionalEncoding, masked_mae
 from skytraffic.models.base import BaseModel
+from skytraffic.models.forecast_model import ForecastModel
+
+
+class PatchLGCForecastModel(ForecastModel):
+    """Normalize traffic data and append Patch LGC's coverage-mask feature."""
+
+    def preprocess(self, data: Dict[str, torch.Tensor]):
+        source, target = super().preprocess(data)
+        if self.network.use_cvg_mask:
+            coverage_mask = data["coverage_mask"].to(self.network.device)
+            source = torch.cat(
+                [source, coverage_mask.unsqueeze(-1).to(source.dtype)],
+                dim=-1,
+            )
+        return source, target
+
+    def adapt_to_metadata(self, metadata):
+        self.network.adapt_to_metadata(metadata)
+
+        data_dims = list(metadata["data_dim"])
+        source_channels = list(metadata["data_channels"]["source"])
+        source_stats = metadata["data_stats"]["source"]
+        self.normalizer.adapt_to_metadata(
+            {
+                "mean": [source_stats[source_channels[idx]]["mean"] for idx in data_dims],
+                "std": [source_stats[source_channels[idx]]["std"] for idx in data_dims],
+                "data_dim": data_dims,
+            }
+        )
+        return self
+
 
 class PatchedMVLSTMGCNConv(BaseModel):
-    """ LSTM GCN model with temporal patching for multivariate time series forecasting (traffic speed and flow).
-    """
+    """LSTM-GCN with temporal patching for multivariate traffic forecasting."""
+
     def __init__(
         self,
         # arguments purely based on model
@@ -31,7 +60,6 @@ class PatchedMVLSTMGCNConv(BaseModel):
         pred_steps: int = 10,
         pred_feat : int = 2,
         num_nodes: int = 1570,
-        data_null_value: float = 0.0,
         metadata: dict = None,
     ):
         """
@@ -45,11 +73,14 @@ class PatchedMVLSTMGCNConv(BaseModel):
             temporal_patching (int, default to None): down-sample the temporal dimension by this factor using a convolution layer.
             masked_value_embedding: will use the customized ValueEmbedding for the input data if True, otherwise a simple linear transformation.
         """
-        super().__init__(input_steps=input_steps, pred_steps=pred_steps, num_nodes=num_nodes, data_null_value=data_null_value, metadata=metadata)
+        super().__init__()
+        self.input_steps = input_steps if input_steps is not None else metadata["input_steps"]
+        self.pred_steps = pred_steps if pred_steps is not None else metadata["pred_steps"]
+        self.num_nodes = num_nodes if num_nodes is not None else metadata["num_nodes"]
         self.use_global = use_global
         self.adjacency_hop = adjacency_hop
         self.temp_patching = temp_patching
-        self.edge_index: torch.Tensor
+        self.edge_index: torch.Tensor | None = None
         self.pred_feat = pred_feat
         self.use_cvg_mask = use_cvg_mask
 
@@ -77,60 +108,20 @@ class PatchedMVLSTMGCNConv(BaseModel):
             self.global_norm2 = nn.LayerNorm(global_dim) if layernorm else nn.Identity()
 
             self.channel_up_sample = nn.Linear(in_features=global_dim, out_features=d_model)
-            
+
         self.prediction = MLP(in_dim=d_model * int(1 + self.use_global), hid_dim=int(d_model * 2), out_dim=pred_steps*pred_feat, dropout=dropout)
 
-        self.loss = masked_mae
-
-    def preprocess(self, data: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-        source = data.get("source", None)
-        target = data.get("target", None)
-        coverage_mask = data.get("coverage_mask", None)
-
-        if source is None and target is None:
-            raise ValueError("Both source and target are None in the input data.")
-        
-        if source is not None:
-            # normalize the data
-            source = source.to(self.device)
-            source = self.in_datascaler.transform(source, datadim_only=True)
-            if self.use_cvg_mask and coverage_mask is not None:
-                coverage_mask = coverage_mask.unsqueeze(-1).float().to(self.device)
-                source = torch.concatenate([source, coverage_mask], dim=-1)
-
-        if target is not None:
-            target = target.to(self.device)
-            # replace the label values with nan, so that they will be ignored in the loss after normalization
-            if not np.isfinite(self.data_null_value):
-                target[target.isnan()] = float("nan")
-            else:
-                target[target == self.data_null_value] = float("nan")
-            target = self.out_datascaler.transform(target, datadim_only=False)
-        
-        return source, target
-
-    def post_process(self, prediction: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        prediction['pred'] = self.out_datascaler.inverse_transform(prediction["pred"])
-        return prediction
-
-    def compute_loss(self, source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        pred_res = self.make_prediction(source)
-        loss = self.loss(pred_res['pred'], target, null_val=float("nan"))
-
-        return {"loss": loss}
-
-    def inference(self, source: torch.Tensor) -> torch.Tensor:
-        return self.post_process(self.make_prediction(source))
-
-    def make_prediction(self, source: dict[str, torch.Tensor]) -> torch.Tensor:
+    def forward(self, source: torch.Tensor) -> torch.Tensor:
         fused_features = self.feature_extraction(source)
         pred = self.prediction(fused_features)
-        pred = rearrange(pred, "N P (T C) -> N T P C", C=self.pred_feat)
+        return rearrange(pred, "N P (T C) -> N T P C", C=self.pred_feat)
 
-        return {"pred": pred}
+    def compute_loss(self, source: torch.Tensor, target: torch.Tensor) -> Dict[str, torch.Tensor]:
+        loss = masked_mae(self(source), target, null_val=float("nan"))
+        return {"loss": loss}
 
     def feature_extraction(self, x: torch.Tensor) -> torch.Tensor:
-        N, T, P, C = x.shape 
+        N, _, _, _ = x.shape
 
         all_mode_features = [] # store the features of all modalities
         
@@ -161,17 +152,6 @@ class PatchedMVLSTMGCNConv(BaseModel):
     
 
     def adapt_to_metadata(self, metadata):
-        
-        self.in_datascaler = TensorDataScaler(
-            mean=[stats['mean'] for _, stats in metadata['data_stats']['source'].items()], 
-            std=[stats['std'] for _, stats in metadata['data_stats']['source'].items()], 
-            data_dim=metadata['data_dim']
-        )
-        self.out_datascaler = TensorDataScaler(
-            mean=[stats['mean'] for _, stats in metadata['data_stats']['target'].items()],
-            std=[stats['std'] for _, stats in metadata['data_stats']['target'].items()],
-            data_dim=metadata['data_dim']
-        )
         # adjacency can be one or multiple adjacency matrices 
         adjacency = metadata['adjacency']
         if not isinstance(adjacency, (list, tuple)):
@@ -189,25 +169,7 @@ class PatchedMVLSTMGCNConv(BaseModel):
         edge_index = torch.nonzero(binary_adjacency, as_tuple=False).T
         self.edge_index = edge_index
 
-    def to(self, device: torch.device):
-        self.in_datascaler = self.in_datascaler.to(device)
-        self.out_datascaler = self.out_datascaler.to(device)
-        self.edge_index = self.edge_index.to(device)
+    def to(self, device: torch.device | str):
+        if self.edge_index is not None:
+            self.edge_index = self.edge_index.to(device)
         return super().to(device)
-    
-    def state_dict(self):
-        """ we add datascalar and metadata to the state_dict, so that they will be saved to the checkpoint, 
-        and then can be loaded later.
-        """
-        state = dict()
-        state["model_params"] = super().state_dict()
-        state["edge_index"] = self.edge_index
-        state["in_datascaler"] = self.in_datascaler.state_dict()
-        state["out_datascaler"] = self.out_datascaler.state_dict()
-        return state
-    
-    def load_state_dict(self, state_dict, strict: bool = False):
-        self.in_datascaler = TensorDataScaler(**state_dict["in_datascaler"]).to(self.device)
-        self.out_datascaler = TensorDataScaler(**state_dict["out_datascaler"]).to(self.device)
-        self.edge_index = state_dict["edge_index"].to(self.device)
-        super().load_state_dict(state_dict["model_params"], strict=strict)

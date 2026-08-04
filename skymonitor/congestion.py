@@ -131,7 +131,7 @@ if __name__ == "__main__":
     parser.add_argument('--density-threshold', type=float, default=1e-3, help='Minimum density to compute speed; lower values treated as empty.')
     parser.add_argument('--ff-quantile', type=float, default=0.85, help='Quantile used to estimate free-flow speed per segment. 1.0 means maximum observed speed.')
     parser.add_argument('--entry-thd', type=float, default=0.5, help='Congestion entry threshold. Value above is considered congested.')
-    parser.add_argument('--exit-thd', type=float, default=0.7, help='Congestion exit threshold. Value below is not congested.')
+    parser.add_argument('--exit-thd', type=float, default=0.4, help='Congestion exit threshold. Value below is not congested.')
     args = parser.parse_args()
 
     trainset, test_set = initialize_dataset()

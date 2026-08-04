@@ -698,7 +698,7 @@ def prepare_env_data_structure(
 	density_threshold=0.001,
 	ff_quantile=0.85,
 	entry_thd=0.5,
-	exit_thd=0.7,
+	exit_thd=0.4,
 	congestion_level_thresholds=(0.25, 0.5, 0.75),
 	level_change_weights=(1.0, 2.0, 3.0),
 	region_ids: np.ndarray = None,
