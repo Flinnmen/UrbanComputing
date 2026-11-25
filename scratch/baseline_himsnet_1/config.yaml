@@ -1,0 +1,35 @@
+dataloader:
+  test:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 8
+    collate_fn: null
+    dataset: {_target_: skytraffic.data.datasets.SimBarcaMSMT, input_window: 30, pred_window: 30, sample_per_session: 20, split: test, step_size: 3}
+    shuffle: false
+  train:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 8
+    collate_fn: null
+    dataset: {_target_: skytraffic.data.datasets.SimBarcaMSMT, input_window: 30, pred_window: 30, sample_per_session: 20, split: train, step_size: 3}
+    shuffle: true
+dataset:
+  test: {_target_: skytraffic.data.datasets.SimBarcaMSMT, input_window: 30, pred_window: 30, sample_per_session: 20, split: test, step_size: 3}
+  train: {_target_: skytraffic.data.datasets.SimBarcaMSMT, input_window: 30, pred_window: 30, sample_per_session: 20, split: train, step_size: 3}
+evaluator: {_target_: skytraffic.evaluation.SimBarcaEvaluator, ignore_value: .nan, mape_threshold: 1.0, save_dir: '${train.output_dir}/evaluation'}
+model: {_target_: skytraffic.models.HiMSNet, adjacency_hop: 5, attn_agg: true, d_model: 64, global_downsample_factor: 1, layernorm: true, metadata: null, normalize_input: true, scale_output: true, simple_fillna: false, use_drone: true, use_global: true, use_ld: true}
+optimizer:
+  _target_: torch.optim.Adam
+  betas: [0.9, 0.999]
+  lr: 0.001
+  params: null
+  weight_decay: 0.0001
+scheduler:
+  _target_: torch.optim.lr_scheduler.LambdaLR
+  lr_lambda:
+    _target_: skytraffic.solver.WarmupMultiStepScaler
+    end: 20
+    gamma: 0.1
+    milestones: [0.7, 0.85]
+    start: 0
+    warmup: 2.0
+  optimizer: null
+train: {best_metric: null, checkpoint: '', device: cuda, eval_period: 1, eval_train: false, grad_clip: 3.0, max_epoch: 20, output_dir: scratch/baseline_himsnet_1, save_period: 5, test_best_ckpt: false}

@@ -1,5 +1,5 @@
 train = {
-    "max_epoch": 50,
+    "max_epoch": 20,
     "output_dir": "scratch/debug", 
     "checkpoint": "",
     "device": "cuda",

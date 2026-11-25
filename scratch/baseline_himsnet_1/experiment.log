@@ -1,0 +1,868 @@
+[11/25 15:56:31 default]: Command Line Arguments: Namespace(config_file='config/himsnet/HiMSNet.py', eval_only=False, resume=False, opts=['train.output_dir=scratch/SAVE_DIR'])
+[11/25 15:56:31 default]: Config saved to scratch/SAVE_DIR/config.yaml
+[11/25 15:56:31 default]: Start experiment with the following configurations: 
+ dataloader:
+  test:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 8
+    collate_fn: null
+    dataset:
+      _target_: skytraffic.data.datasets.SimBarcaMSMT
+      input_window: 30
+      pred_window: 30
+      sample_per_session: 20
+      split: test
+      step_size: 3
+    shuffle: false
+  train:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 8
+    collate_fn: null
+    dataset:
+      _target_: skytraffic.data.datasets.SimBarcaMSMT
+      input_window: 30
+      pred_window: 30
+      sample_per_session: 20
+      split: train
+      step_size: 3
+    shuffle: true
+dataset:
+  test:
+    _target_: skytraffic.data.datasets.SimBarcaMSMT
+    input_window: 30
+    pred_window: 30
+    sample_per_session: 20
+    split: test
+    step_size: 3
+  train:
+    _target_: skytraffic.data.datasets.SimBarcaMSMT
+    input_window: 30
+    pred_window: 30
+    sample_per_session: 20
+    split: train
+    step_size: 3
+evaluator:
+  _target_: skytraffic.evaluation.SimBarcaEvaluator
+  ignore_value: .nan
+  mape_threshold: 1.0
+  save_dir: ${train.output_dir}/evaluation
+model:
+  _target_: skytraffic.models.HiMSNet
+  adjacency_hop: 5
+  attn_agg: true
+  d_model: 64
+  global_downsample_factor: 1
+  layernorm: true
+  metadata: null
+  normalize_input: true
+  scale_output: true
+  simple_fillna: false
+  use_drone: true
+  use_global: true
+  use_ld: true
+optimizer:
+  _target_: torch.optim.Adam
+  betas:
+  - 0.9
+  - 0.999
+  lr: 0.001
+  params: null
+  weight_decay: 0.0001
+scheduler:
+  _target_: torch.optim.lr_scheduler.LambdaLR
+  lr_lambda:
+    _target_: skytraffic.solver.WarmupMultiStepScaler
+    end: 20
+    gamma: 0.1
+    milestones:
+    - 0.7
+    - 0.85
+    start: 0
+    warmup: 2.0
+  optimizer: null
+train:
+  best_metric: null
+  checkpoint: ''
+  device: cuda
+  eval_period: 1
+  eval_train: false
+  grad_clip: 3.0
+  max_epoch: 20
+  output_dir: scratch/SAVE_DIR
+  save_period: 5
+  test_best_ckpt: false
+
+[11/25 15:56:31 default]: Loading 75 sample files for train split in parallel
+[11/25 15:56:35 default]: Loaded metadata from datasets/simbarca/metadata/simbarcamsmt.pkl, containing dict_keys(['adjacency', 'edge_index', 'cluster_id', 'grid_id', 'mean_and_std', 'input_seqs', 'output_seqs'])
+[11/25 15:56:35 default]: Loading 26 sample files for test split in parallel
+[11/25 15:56:36 default]: Loaded metadata from datasets/simbarca/metadata/simbarcamsmt.pkl, containing dict_keys(['adjacency', 'edge_index', 'cluster_id', 'grid_id', 'mean_and_std', 'input_seqs', 'output_seqs'])
+[11/25 15:56:36 default]: Number of edges in the graph: torch.Size([2, 100757])
+[11/25 15:56:37 default]: Checkpoint does not exist, train from scratch instead. Given Path: None
+[11/25 15:56:37 default]: start training...
+[11/25 15:56:37 default]: The model structure 
+ HiMSNet(
+  (spatial_encoding): LearnedPositionalEncoding(
+    d_model=64, max_len=1570, init_method='rand'
+    (dropout): Dropout(p=0.1, inplace=False)
+  )
+  (drone_embedding): ValueEmbedding(d_model=64)
+  (temporal_encoding_drone): LearnedPositionalEncoding(
+    d_model=64, max_len=500, init_method='rand'
+    (dropout): Dropout(p=0.1, inplace=False)
+  )
+  (drone_t_patching_1): Conv1d(64, 64, kernel_size=(3,), stride=(3,))
+  (drone_t_patching_2): Conv1d(64, 64, kernel_size=(3,), stride=(3,))
+  (drone_temporal): LSTM(64, 64, num_layers=3, batch_first=True)
+  (drone_norm): LayerNorm((64,), eps=1e-05, elementwise_affine=True)
+  (ld_embedding): ValueEmbedding(d_model=64)
+  (temporal_encoding_ld): LearnedPositionalEncoding(
+    d_model=64, max_len=500, init_method='rand'
+    (dropout): Dropout(p=0.1, inplace=False)
+  )
+  (ld_temporal): LSTM(64, 64, num_layers=3, batch_first=True)
+  (ld_norm): LayerNorm((64,), eps=1e-05, elementwise_affine=True)
+  (channel_down_sample): LazyLinear(in_features=0, out_features=64, bias=True)
+  (dropout_glb): Dropout(p=0.1, inplace=False)
+  (relu): ReLU()
+  (gcn_1): GCNConv(64, 64)
+  (gcn_2): GCNConv(64, 64)
+  (gcn_3): GCNConv(64, 64)
+  (global_norm1): LayerNorm((64,), eps=1e-05, elementwise_affine=True)
+  (global_norm2): LayerNorm((64,), eps=1e-05, elementwise_affine=True)
+  (channel_up_sample): Linear(in_features=64, out_features=64, bias=True)
+  (feature_aggregator): MultiHeadAttention(
+    (w_qs): Linear(in_features=192, out_features=192, bias=False)
+    (w_ks): Linear(in_features=192, out_features=192, bias=False)
+    (w_vs): Linear(in_features=192, out_features=192, bias=False)
+    (fc): Linear(in_features=192, out_features=192, bias=False)
+    (attention): ScaledDotProductAttention(
+      (dropout): Dropout(p=0.1, inplace=False)
+    )
+    (dropout): Dropout(p=0.1, inplace=False)
+    (layer_norm): LayerNorm((192,), eps=1e-06, elementwise_affine=True)
+  )
+  (prediction): MLP(
+    (layers): ModuleList()
+    (dropout): Dropout(p=0.1, inplace=False)
+    (linear1): Linear(in_features=192, out_features=128, bias=True)
+    (norm1): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+    (linear2): Linear(in_features=128, out_features=10, bias=True)
+  )
+  (prediction_regional): MLP(
+    (layers): ModuleList()
+    (dropout): Dropout(p=0.1, inplace=False)
+    (linear1): Linear(in_features=192, out_features=128, bias=True)
+    (norm1): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+    (linear2): Linear(in_features=128, out_features=10, bias=True)
+  )
+  (loss): GeneralizedProbRegLoss(aleatoric=False, exponent=1, alpha=1.0, ignore_value=nan)
+)
+[11/25 16:02:00 default]: Evaluation Metrics (test): pred_speed_mae: 1.2956  pred_speed_mape: 0.3138  pred_speed_rmse: 1.9407  pred_speed_regional_mae: 0.5604  pred_speed_regional_mape: 0.1874  pred_speed_regional_rmse: 0.7696
+[11/25 16:02:00 default]: Epoch: 000, Training Time: 309.7177 secs Inference Time: 14.0456 secs
+[11/25 16:02:00 default]: Training Losses: loss 1.8044  loss_regional 0.6912
+[11/25 16:07:20 default]: Evaluation Metrics (test): pred_speed_mae: 1.1661  pred_speed_mape: 0.2696  pred_speed_rmse: 1.8592  pred_speed_regional_mae: 0.4189  pred_speed_regional_mape: 0.1376  pred_speed_regional_rmse: 0.6077
+[11/25 16:07:20 default]: Epoch: 001, Training Time: 305.7523 secs Inference Time: 14.1323 secs
+[11/25 16:07:20 default]: Training Losses: loss 1.2912  loss_regional 0.4128
+[11/25 16:12:38 default]: Evaluation Metrics (test): pred_speed_mae: 1.1389  pred_speed_mape: 0.2794  pred_speed_rmse: 1.8145  pred_speed_regional_mae: 0.3599  pred_speed_regional_mape: 0.1207  pred_speed_regional_rmse: 0.5241
+[11/25 16:12:38 default]: Epoch: 002, Training Time: 302.7450 secs Inference Time: 14.7228 secs
+[11/25 16:12:38 default]: Training Losses: loss 1.1802  loss_regional 0.3226
+[11/25 16:18:11 default]: Evaluation Metrics (test): pred_speed_mae: 1.1086  pred_speed_mape: 0.2414  pred_speed_rmse: 1.8207  pred_speed_regional_mae: 0.2787  pred_speed_regional_mape: 0.0958  pred_speed_regional_rmse: 0.4339
+[11/25 16:18:11 default]: Epoch: 003, Training Time: 318.0516 secs Inference Time: 14.8214 secs
+[11/25 16:18:11 default]: Training Losses: loss 1.1270  loss_regional 0.2788
+[11/25 16:23:33 default]: Evaluation Metrics (test): pred_speed_mae: 1.0891  pred_speed_mape: 0.2425  pred_speed_rmse: 1.7988  pred_speed_regional_mae: 0.2635  pred_speed_regional_mape: 0.0904  pred_speed_regional_rmse: 0.4199
+[11/25 16:23:33 default]: Epoch: 004, Training Time: 307.3433 secs Inference Time: 14.9287 secs
+[11/25 16:23:33 default]: Training Losses: loss 1.1016  loss_regional 0.2592
+[11/25 16:29:01 default]: Evaluation Metrics (test): pred_speed_mae: 1.0797  pred_speed_mape: 0.2385  pred_speed_rmse: 1.7916  pred_speed_regional_mae: 0.2956  pred_speed_regional_mape: 0.1035  pred_speed_regional_rmse: 0.4512
+[11/25 16:29:01 default]: Epoch: 005, Training Time: 313.8258 secs Inference Time: 14.5190 secs
+[11/25 16:29:01 default]: Training Losses: loss 1.0969  loss_regional 0.2536
+[11/25 16:29:01 default]: Epoch: 005, Checkpoint saved to scratch/SAVE_DIR/himsnet_epoch_5.pth
+[11/25 16:34:27 default]: Evaluation Metrics (test): pred_speed_mae: 1.0681  pred_speed_mape: 0.2419  pred_speed_rmse: 1.7641  pred_speed_regional_mae: 0.2938  pred_speed_regional_mape: 0.1024  pred_speed_regional_rmse: 0.4592
+[11/25 16:34:27 default]: Epoch: 006, Training Time: 311.1753 secs Inference Time: 14.5046 secs
+[11/25 16:34:27 default]: Training Losses: loss 1.0876  loss_regional 0.2475
+[11/25 16:39:52 default]: Evaluation Metrics (test): pred_speed_mae: 1.0747  pred_speed_mape: 0.2441  pred_speed_rmse: 1.7520  pred_speed_regional_mae: 0.2824  pred_speed_regional_mape: 0.0929  pred_speed_regional_rmse: 0.4194
+[11/25 16:39:52 default]: Epoch: 007, Training Time: 309.6819 secs Inference Time: 15.1398 secs
+[11/25 16:39:52 default]: Training Losses: loss 1.0821  loss_regional 0.2412
+[11/25 16:45:23 default]: Evaluation Metrics (test): pred_speed_mae: 1.0492  pred_speed_mape: 0.2442  pred_speed_rmse: 1.7546  pred_speed_regional_mae: 0.2531  pred_speed_regional_mape: 0.0851  pred_speed_regional_rmse: 0.3912
+[11/25 16:45:23 default]: Epoch: 008, Training Time: 316.7017 secs Inference Time: 14.7219 secs
+[11/25 16:45:23 default]: Training Losses: loss 1.0741  loss_regional 0.2263
+[11/25 16:50:44 default]: Evaluation Metrics (test): pred_speed_mae: 1.0483  pred_speed_mape: 0.2428  pred_speed_rmse: 1.7432  pred_speed_regional_mae: 0.2386  pred_speed_regional_mape: 0.0806  pred_speed_regional_rmse: 0.3696
+[11/25 16:50:44 default]: Epoch: 009, Training Time: 306.7397 secs Inference Time: 14.2504 secs
+[11/25 16:50:44 default]: Training Losses: loss 1.0762  loss_regional 0.2292
+[11/25 16:56:09 default]: Evaluation Metrics (test): pred_speed_mae: 1.0592  pred_speed_mape: 0.2390  pred_speed_rmse: 1.7758  pred_speed_regional_mae: 0.2508  pred_speed_regional_mape: 0.0832  pred_speed_regional_rmse: 0.3745
+[11/25 16:56:09 default]: Epoch: 010, Training Time: 310.9960 secs Inference Time: 14.2719 secs
+[11/25 16:56:09 default]: Training Losses: loss 1.0683  loss_regional 0.2161
+[11/25 16:56:09 default]: Epoch: 010, Checkpoint saved to scratch/SAVE_DIR/himsnet_epoch_10.pth
+[11/25 17:01:36 default]: Evaluation Metrics (test): pred_speed_mae: 1.0569  pred_speed_mape: 0.2375  pred_speed_rmse: 1.7470  pred_speed_regional_mae: 0.2443  pred_speed_regional_mape: 0.0790  pred_speed_regional_rmse: 0.3634
+[11/25 17:01:36 default]: Epoch: 011, Training Time: 311.4105 secs Inference Time: 14.6891 secs
+[11/25 17:01:36 default]: Training Losses: loss 1.0655  loss_regional 0.2181
+[11/25 17:07:03 default]: Evaluation Metrics (test): pred_speed_mae: 1.0435  pred_speed_mape: 0.2356  pred_speed_rmse: 1.7350  pred_speed_regional_mae: 0.2399  pred_speed_regional_mape: 0.0789  pred_speed_regional_rmse: 0.3653
+[11/25 17:07:03 default]: Epoch: 012, Training Time: 313.1266 secs Inference Time: 14.7054 secs
+[11/25 17:07:03 default]: Training Losses: loss 1.0653  loss_regional 0.2153
+[11/25 17:12:31 default]: Evaluation Metrics (test): pred_speed_mae: 1.0360  pred_speed_mape: 0.2371  pred_speed_rmse: 1.7268  pred_speed_regional_mae: 0.2436  pred_speed_regional_mape: 0.0799  pred_speed_regional_rmse: 0.3706
+[11/25 17:12:31 default]: Epoch: 013, Training Time: 312.9095 secs Inference Time: 14.2222 secs
+[11/25 17:12:31 default]: Training Losses: loss 1.0607  loss_regional 0.2162
+[11/25 17:17:53 default]: Evaluation Metrics (test): pred_speed_mae: 1.0303  pred_speed_mape: 0.2368  pred_speed_rmse: 1.7191  pred_speed_regional_mae: 0.2265  pred_speed_regional_mape: 0.0760  pred_speed_regional_rmse: 0.3539
+[11/25 17:17:53 default]: Epoch: 014, Training Time: 308.1551 secs Inference Time: 14.3456 secs
+[11/25 17:17:53 default]: Training Losses: loss 1.0443  loss_regional 0.1872
+[11/25 17:23:16 default]: Evaluation Metrics (test): pred_speed_mae: 1.0288  pred_speed_mape: 0.2382  pred_speed_rmse: 1.7164  pred_speed_regional_mae: 0.2280  pred_speed_regional_mape: 0.0760  pred_speed_regional_rmse: 0.3572
+[11/25 17:23:16 default]: Epoch: 015, Training Time: 308.9869 secs Inference Time: 14.3517 secs
+[11/25 17:23:16 default]: Training Losses: loss 1.0421  loss_regional 0.1835
+[11/25 17:23:16 default]: Epoch: 015, Checkpoint saved to scratch/SAVE_DIR/himsnet_epoch_15.pth
+[11/25 17:28:43 default]: Evaluation Metrics (test): pred_speed_mae: 1.0286  pred_speed_mape: 0.2366  pred_speed_rmse: 1.7119  pred_speed_regional_mae: 0.2232  pred_speed_regional_mape: 0.0743  pred_speed_regional_rmse: 0.3481
+[11/25 17:28:43 default]: Epoch: 016, Training Time: 311.8299 secs Inference Time: 15.2240 secs
+[11/25 17:28:43 default]: Training Losses: loss 1.0415  loss_regional 0.1830
+[11/25 17:34:17 default]: Evaluation Metrics (test): pred_speed_mae: 1.0274  pred_speed_mape: 0.2369  pred_speed_rmse: 1.7179  pred_speed_regional_mae: 0.2231  pred_speed_regional_mape: 0.0746  pred_speed_regional_rmse: 0.3483
+[11/25 17:34:17 default]: Epoch: 017, Training Time: 318.9465 secs Inference Time: 15.0729 secs
+[11/25 17:34:17 default]: Training Losses: loss 1.0399  loss_regional 0.1790
+[11/25 17:39:48 default]: Evaluation Metrics (test): pred_speed_mae: 1.0273  pred_speed_mape: 0.2363  pred_speed_rmse: 1.7156  pred_speed_regional_mae: 0.2229  pred_speed_regional_mape: 0.0746  pred_speed_regional_rmse: 0.3487
+[11/25 17:39:48 default]: Epoch: 018, Training Time: 315.5104 secs Inference Time: 15.0133 secs
+[11/25 17:39:48 default]: Training Losses: loss 1.0395  loss_regional 0.1793
+[11/25 17:45:19 default]: Evaluation Metrics (test): pred_speed_mae: 1.0269  pred_speed_mape: 0.2369  pred_speed_rmse: 1.7149  pred_speed_regional_mae: 0.2229  pred_speed_regional_mape: 0.0747  pred_speed_regional_rmse: 0.3504
+[11/25 17:45:19 default]: Epoch: 019, Training Time: 316.6036 secs Inference Time: 14.1208 secs
+[11/25 17:45:19 default]: Training Losses: loss 1.0396  loss_regional 0.1790
+[11/25 17:45:19 default]: Training finished
+[11/25 17:45:19 default]: Average Training Time: 311.5105 secs/epoch
+[11/25 17:45:19 default]: Average Inference Time: 14.5902 secs/epoch
+[11/25 17:45:19 default]: The best achieved validation loss is inf
+[11/25 17:45:19 default]: Epoch: 019, Checkpoint saved to scratch/SAVE_DIR/himsnet_epoch_19.pth
+[11/25 17:45:19 default]: Copying the final model to scratch/SAVE_DIR/model_final.pth
+[11/25 17:45:33 default]: Evaluate model on pred_speed
+[11/25 17:45:33 default]: Evaluate model on test data at 1 time step
+[11/25 17:45:33 default]: MAE: 0.9055, MAPE: 0.2092, RMSE: 1.5040
+[11/25 17:45:33 default]: Evaluate model on test data at 2 time step
+[11/25 17:45:33 default]: MAE: 0.9699, MAPE: 0.2245, RMSE: 1.6185
+[11/25 17:45:33 default]: Evaluate model on test data at 3 time step
+[11/25 17:45:33 default]: MAE: 0.9849, MAPE: 0.2278, RMSE: 1.6474
+[11/25 17:45:33 default]: Evaluate model on test data at 4 time step
+[11/25 17:45:33 default]: MAE: 0.9948, MAPE: 0.2302, RMSE: 1.6661
+[11/25 17:45:33 default]: Evaluate model on test data at 5 time step
+[11/25 17:45:33 default]: MAE: 1.0047, MAPE: 0.2324, RMSE: 1.6832
+[11/25 17:45:33 default]: Evaluate model on test data at 6 time step
+[11/25 17:45:33 default]: MAE: 1.0162, MAPE: 0.2360, RMSE: 1.7026
+[11/25 17:45:33 default]: Evaluate model on test data at 7 time step
+[11/25 17:45:33 default]: MAE: 1.0379, MAPE: 0.2412, RMSE: 1.7378
+[11/25 17:45:33 default]: Evaluate model on test data at 8 time step
+[11/25 17:45:33 default]: MAE: 1.0736, MAPE: 0.2481, RMSE: 1.7925
+[11/25 17:45:33 default]: Evaluate model on test data at 9 time step
+[11/25 17:45:33 default]: MAE: 1.1183, MAPE: 0.2559, RMSE: 1.8627
+[11/25 17:45:33 default]: Evaluate model on test data at 10 time step
+[11/25 17:45:33 default]: MAE: 1.1637, MAPE: 0.2635, RMSE: 1.9340
+[11/25 17:45:33 default]: On average over different time steps
+[11/25 17:45:33 default]: MAE: 1.0261, MAPE: 0.2365, RMSE: 1.7175
+[11/25 17:45:33 default]: Evaluate model on pred_speed_regional
+[11/25 17:45:33 default]: Evaluate model on test data at 1 time step
+[11/25 17:45:33 default]: MAE: 0.1803, MAPE: 0.0553, RMSE: 0.2766
+[11/25 17:45:33 default]: Evaluate model on test data at 2 time step
+[11/25 17:45:33 default]: MAE: 0.1922, MAPE: 0.0602, RMSE: 0.2944
+[11/25 17:45:33 default]: Evaluate model on test data at 3 time step
+[11/25 17:45:33 default]: MAE: 0.1982, MAPE: 0.0635, RMSE: 0.3079
+[11/25 17:45:33 default]: Evaluate model on test data at 4 time step
+[11/25 17:45:33 default]: MAE: 0.2033, MAPE: 0.0665, RMSE: 0.3200
+[11/25 17:45:33 default]: Evaluate model on test data at 5 time step
+[11/25 17:45:33 default]: MAE: 0.2099, MAPE: 0.0695, RMSE: 0.3315
+[11/25 17:45:33 default]: Evaluate model on test data at 6 time step
+[11/25 17:45:33 default]: MAE: 0.2160, MAPE: 0.0727, RMSE: 0.3437
+[11/25 17:45:33 default]: Evaluate model on test data at 7 time step
+[11/25 17:45:33 default]: MAE: 0.2249, MAPE: 0.0771, RMSE: 0.3549
+[11/25 17:45:33 default]: Evaluate model on test data at 8 time step
+[11/25 17:45:33 default]: MAE: 0.2367, MAPE: 0.0823, RMSE: 0.3707
+[11/25 17:45:33 default]: Evaluate model on test data at 9 time step
+[11/25 17:45:33 default]: MAE: 0.2647, MAPE: 0.0928, RMSE: 0.4142
+[11/25 17:45:33 default]: Evaluate model on test data at 10 time step
+[11/25 17:45:33 default]: MAE: 0.3026, MAPE: 0.1073, RMSE: 0.4902
+[11/25 17:45:33 default]: On average over different time steps
+[11/25 17:45:33 default]: MAE: 0.2229, MAPE: 0.0745, RMSE: 0.3555
+[11/25 17:45:33 default]: Results to copy in manuscripts: 
+ METHOD & 1.00 & 23.2\% & 1.68 & 1.16 & 26.3\% & 1.93 & 0.21 & 7.0\% & 0.33 & 0.30 & 10.7\% & 0.49 \\ 
+
+[11/25 17:45:33 default]: Results to copy in excel: 
+ METHOD 1.00 23.2% 1.68 1.16 26.3% 1.93 0.21 7.0% 0.33 0.30 10.7% 0.49 
+
+[11/25 17:45:33 default]: Saved scores to scratch/SAVE_DIR/evaluation/final_evaluation_scores.json
+[11/25 17:45:34 default]: Saved the plot to scratch/SAVE_DIR/evaluation/average_mae_example.pdf
+[11/25 17:45:34 default]: Encountered Exception
+Traceback (most recent call last):
+  File "C:\Users\vidsf\urban computing\project\skytraffic\engine\base.py", line 119, in train
+    self.after_train()
+    ~~~~~~~~~~~~~~~~^^
+  File "C:\Users\vidsf\urban computing\project\skytraffic\engine\base.py", line 173, in after_train
+    hook.after_train(self)
+    ~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\vidsf\urban computing\project\skytraffic\engine\hooks.py", line 70, in after_train
+    test_metrics = self.eval_function(trainer.model)
+  File "C:\Users\vidsf\Documents\GitHub\OpenSkyTraffic\scripts\train.py", line 116, in <lambda>
+    hooks.EvalHook(lambda m: evaluator(m, test_loader, verbose=True, visualize=True), metric_suffix='final_test'),
+                             ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\vidsf\urban computing\project\skytraffic\evaluation\simbarca_evaluation.py", line 37, in __call__
+    return self.evaluate(model, data_loader, verbose=verbose, visualize=visualize)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\vidsf\urban computing\project\skytraffic\evaluation\simbarca_evaluation.py", line 217, in evaluate
+    self.mae_by_demand_scale(
+    ~~~~~~~~~~~~~~~~~~~~~~~~^
+        all_preds,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        )
+        ^
+    )
+    ^
+  File "C:\Users\vidsf\urban computing\project\skytraffic\evaluation\simbarca_evaluation.py", line 91, in mae_by_demand_scale
+    ax.boxplot(error_by_scale.values(), labels=error_by_scale.keys())
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\vidsf\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\matplotlib\_api\deprecation.py", line 477, in wrapper
+    return func(*args, **kwargs)
+  File "C:\Users\vidsf\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\matplotlib\__init__.py", line 1531, in inner
+    return func(
+        ax,
+        *map(cbook.sanitize_sequence, args),
+        **{k: cbook.sanitize_sequence(v) for k, v in kwargs.items()})
+TypeError: Axes.boxplot() got an unexpected keyword argument 'labels'. Did you mean 'label'?
+[11/25 17:50:37 default]: Command Line Arguments: Namespace(config_file='scratch/baseline_himsnet_1/config.yaml', eval_only=True, resume=False, opts=['evaluation.visualize=True'])
+[11/25 17:50:37 default]: Start experiment with the following configurations: 
+ dataloader:
+  test:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 8
+    collate_fn: null
+    dataset:
+      _target_: skytraffic.data.datasets.SimBarcaMSMT
+      input_window: 30
+      pred_window: 30
+      sample_per_session: 20
+      split: test
+      step_size: 3
+    shuffle: false
+  train:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 8
+    collate_fn: null
+    dataset:
+      _target_: skytraffic.data.datasets.SimBarcaMSMT
+      input_window: 30
+      pred_window: 30
+      sample_per_session: 20
+      split: train
+      step_size: 3
+    shuffle: true
+dataset:
+  test:
+    _target_: skytraffic.data.datasets.SimBarcaMSMT
+    input_window: 30
+    pred_window: 30
+    sample_per_session: 20
+    split: test
+    step_size: 3
+  train:
+    _target_: skytraffic.data.datasets.SimBarcaMSMT
+    input_window: 30
+    pred_window: 30
+    sample_per_session: 20
+    split: train
+    step_size: 3
+evaluator:
+  _target_: skytraffic.evaluation.SimBarcaEvaluator
+  ignore_value: .nan
+  mape_threshold: 1.0
+  save_dir: ${train.output_dir}/evaluation
+model:
+  _target_: skytraffic.models.HiMSNet
+  adjacency_hop: 5
+  attn_agg: true
+  d_model: 64
+  global_downsample_factor: 1
+  layernorm: true
+  metadata: null
+  normalize_input: true
+  scale_output: true
+  simple_fillna: false
+  use_drone: true
+  use_global: true
+  use_ld: true
+optimizer:
+  _target_: torch.optim.Adam
+  betas:
+  - 0.9
+  - 0.999
+  lr: 0.001
+  params: null
+  weight_decay: 0.0001
+scheduler:
+  _target_: torch.optim.lr_scheduler.LambdaLR
+  lr_lambda:
+    _target_: skytraffic.solver.WarmupMultiStepScaler
+    end: 20
+    gamma: 0.1
+    milestones:
+    - 0.7
+    - 0.85
+    start: 0
+    warmup: 2.0
+  optimizer: null
+train:
+  best_metric: null
+  checkpoint: ''
+  device: cuda
+  eval_period: 1
+  eval_train: false
+  grad_clip: 3.0
+  max_epoch: 20
+  output_dir: scratch/baseline_himsnet_1
+  save_period: 5
+  test_best_ckpt: false
+
+[11/25 17:50:37 default]: Loading 26 sample files for test split in parallel
+[11/25 17:50:38 default]: Loaded metadata from datasets/simbarca/metadata/simbarcamsmt.pkl, containing dict_keys(['adjacency', 'edge_index', 'cluster_id', 'grid_id', 'mean_and_std', 'input_seqs', 'output_seqs'])
+[11/25 17:50:39 default]: Number of edges in the graph: torch.Size([2, 100757])
+[11/25 17:51:22 default]: Command Line Arguments: Namespace(config_file='scratch/baseline_himsnet_1/config.yaml', eval_only=True, resume=False, opts=['evaluation.visualize=True'])
+[11/25 17:51:22 default]: Start experiment with the following configurations: 
+ dataloader:
+  test:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 8
+    collate_fn: null
+    dataset:
+      _target_: skytraffic.data.datasets.SimBarcaMSMT
+      input_window: 30
+      pred_window: 30
+      sample_per_session: 20
+      split: test
+      step_size: 3
+    shuffle: false
+  train:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 8
+    collate_fn: null
+    dataset:
+      _target_: skytraffic.data.datasets.SimBarcaMSMT
+      input_window: 30
+      pred_window: 30
+      sample_per_session: 20
+      split: train
+      step_size: 3
+    shuffle: true
+dataset:
+  test:
+    _target_: skytraffic.data.datasets.SimBarcaMSMT
+    input_window: 30
+    pred_window: 30
+    sample_per_session: 20
+    split: test
+    step_size: 3
+  train:
+    _target_: skytraffic.data.datasets.SimBarcaMSMT
+    input_window: 30
+    pred_window: 30
+    sample_per_session: 20
+    split: train
+    step_size: 3
+evaluator:
+  _target_: skytraffic.evaluation.SimBarcaEvaluator
+  ignore_value: .nan
+  mape_threshold: 1.0
+  save_dir: ${train.output_dir}/evaluation
+model:
+  _target_: skytraffic.models.HiMSNet
+  adjacency_hop: 5
+  attn_agg: true
+  d_model: 64
+  global_downsample_factor: 1
+  layernorm: true
+  metadata: null
+  normalize_input: true
+  scale_output: true
+  simple_fillna: false
+  use_drone: true
+  use_global: true
+  use_ld: true
+optimizer:
+  _target_: torch.optim.Adam
+  betas:
+  - 0.9
+  - 0.999
+  lr: 0.001
+  params: null
+  weight_decay: 0.0001
+scheduler:
+  _target_: torch.optim.lr_scheduler.LambdaLR
+  lr_lambda:
+    _target_: skytraffic.solver.WarmupMultiStepScaler
+    end: 20
+    gamma: 0.1
+    milestones:
+    - 0.7
+    - 0.85
+    start: 0
+    warmup: 2.0
+  optimizer: null
+train:
+  best_metric: null
+  checkpoint: ''
+  device: cuda
+  eval_period: 1
+  eval_train: false
+  grad_clip: 3.0
+  max_epoch: 20
+  output_dir: scratch/baseline_himsnet_1
+  save_period: 5
+  test_best_ckpt: false
+
+[11/25 17:51:22 default]: Loading 26 sample files for test split in parallel
+[11/25 17:51:23 default]: Loaded metadata from datasets/simbarca/metadata/simbarcamsmt.pkl, containing dict_keys(['adjacency', 'edge_index', 'cluster_id', 'grid_id', 'mean_and_std', 'input_seqs', 'output_seqs'])
+[11/25 17:51:24 default]: Number of edges in the graph: torch.Size([2, 100757])
+[11/25 17:51:36 default]: Evaluate model on pred_speed
+[11/25 17:51:36 default]: Evaluate model on test data at 1 time step
+[11/25 17:51:36 default]: MAE: 0.9055, MAPE: 0.2092, RMSE: 1.5040
+[11/25 17:51:36 default]: Evaluate model on test data at 2 time step
+[11/25 17:51:36 default]: MAE: 0.9699, MAPE: 0.2245, RMSE: 1.6185
+[11/25 17:51:36 default]: Evaluate model on test data at 3 time step
+[11/25 17:51:36 default]: MAE: 0.9849, MAPE: 0.2278, RMSE: 1.6474
+[11/25 17:51:36 default]: Evaluate model on test data at 4 time step
+[11/25 17:51:36 default]: MAE: 0.9948, MAPE: 0.2302, RMSE: 1.6661
+[11/25 17:51:36 default]: Evaluate model on test data at 5 time step
+[11/25 17:51:36 default]: MAE: 1.0047, MAPE: 0.2324, RMSE: 1.6832
+[11/25 17:51:36 default]: Evaluate model on test data at 6 time step
+[11/25 17:51:36 default]: MAE: 1.0162, MAPE: 0.2360, RMSE: 1.7026
+[11/25 17:51:36 default]: Evaluate model on test data at 7 time step
+[11/25 17:51:36 default]: MAE: 1.0379, MAPE: 0.2412, RMSE: 1.7378
+[11/25 17:51:36 default]: Evaluate model on test data at 8 time step
+[11/25 17:51:36 default]: MAE: 1.0736, MAPE: 0.2481, RMSE: 1.7925
+[11/25 17:51:36 default]: Evaluate model on test data at 9 time step
+[11/25 17:51:36 default]: MAE: 1.1183, MAPE: 0.2559, RMSE: 1.8627
+[11/25 17:51:36 default]: Evaluate model on test data at 10 time step
+[11/25 17:51:36 default]: MAE: 1.1637, MAPE: 0.2635, RMSE: 1.9340
+[11/25 17:51:36 default]: On average over different time steps
+[11/25 17:51:36 default]: MAE: 1.0261, MAPE: 0.2365, RMSE: 1.7175
+[11/25 17:51:36 default]: Evaluate model on pred_speed_regional
+[11/25 17:51:36 default]: Evaluate model on test data at 1 time step
+[11/25 17:51:36 default]: MAE: 0.1803, MAPE: 0.0553, RMSE: 0.2766
+[11/25 17:51:36 default]: Evaluate model on test data at 2 time step
+[11/25 17:51:36 default]: MAE: 0.1922, MAPE: 0.0602, RMSE: 0.2944
+[11/25 17:51:36 default]: Evaluate model on test data at 3 time step
+[11/25 17:51:36 default]: MAE: 0.1982, MAPE: 0.0635, RMSE: 0.3079
+[11/25 17:51:36 default]: Evaluate model on test data at 4 time step
+[11/25 17:51:36 default]: MAE: 0.2033, MAPE: 0.0665, RMSE: 0.3200
+[11/25 17:51:36 default]: Evaluate model on test data at 5 time step
+[11/25 17:51:36 default]: MAE: 0.2099, MAPE: 0.0695, RMSE: 0.3315
+[11/25 17:51:36 default]: Evaluate model on test data at 6 time step
+[11/25 17:51:36 default]: MAE: 0.2160, MAPE: 0.0727, RMSE: 0.3437
+[11/25 17:51:36 default]: Evaluate model on test data at 7 time step
+[11/25 17:51:36 default]: MAE: 0.2249, MAPE: 0.0771, RMSE: 0.3549
+[11/25 17:51:36 default]: Evaluate model on test data at 8 time step
+[11/25 17:51:36 default]: MAE: 0.2367, MAPE: 0.0823, RMSE: 0.3707
+[11/25 17:51:36 default]: Evaluate model on test data at 9 time step
+[11/25 17:51:36 default]: MAE: 0.2647, MAPE: 0.0928, RMSE: 0.4142
+[11/25 17:51:36 default]: Evaluate model on test data at 10 time step
+[11/25 17:51:36 default]: MAE: 0.3026, MAPE: 0.1073, RMSE: 0.4902
+[11/25 17:51:36 default]: On average over different time steps
+[11/25 17:51:36 default]: MAE: 0.2229, MAPE: 0.0745, RMSE: 0.3555
+[11/25 17:51:36 default]: Results to copy in manuscripts: 
+ METHOD & 1.00 & 23.2\% & 1.68 & 1.16 & 26.3\% & 1.93 & 0.21 & 7.0\% & 0.33 & 0.30 & 10.7\% & 0.49 \\ 
+
+[11/25 17:51:36 default]: Results to copy in excel: 
+ METHOD 1.00 23.2% 1.68 1.16 26.3% 1.93 0.21 7.0% 0.33 0.30 10.7% 0.49 
+
+[11/25 17:51:36 default]: Saved scores to scratch/baseline_himsnet_1/evaluation/final_evaluation_scores.json
+[11/25 17:51:36 default]: Saved the plot to scratch/baseline_himsnet_1/evaluation/average_mae_example.pdf
+[11/25 17:52:32 default]: Command Line Arguments: Namespace(config_file='scratch/baseline_himsnet_1/config.yaml', eval_only=True, resume=False, opts=['evaluation.visualize=True'])
+[11/25 17:52:32 default]: Start experiment with the following configurations: 
+ dataloader:
+  test:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 8
+    collate_fn: null
+    dataset:
+      _target_: skytraffic.data.datasets.SimBarcaMSMT
+      input_window: 30
+      pred_window: 30
+      sample_per_session: 20
+      split: test
+      step_size: 3
+    shuffle: false
+  train:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 8
+    collate_fn: null
+    dataset:
+      _target_: skytraffic.data.datasets.SimBarcaMSMT
+      input_window: 30
+      pred_window: 30
+      sample_per_session: 20
+      split: train
+      step_size: 3
+    shuffle: true
+dataset:
+  test:
+    _target_: skytraffic.data.datasets.SimBarcaMSMT
+    input_window: 30
+    pred_window: 30
+    sample_per_session: 20
+    split: test
+    step_size: 3
+  train:
+    _target_: skytraffic.data.datasets.SimBarcaMSMT
+    input_window: 30
+    pred_window: 30
+    sample_per_session: 20
+    split: train
+    step_size: 3
+evaluator:
+  _target_: skytraffic.evaluation.SimBarcaEvaluator
+  ignore_value: .nan
+  mape_threshold: 1.0
+  save_dir: ${train.output_dir}/evaluation
+model:
+  _target_: skytraffic.models.HiMSNet
+  adjacency_hop: 5
+  attn_agg: true
+  d_model: 64
+  global_downsample_factor: 1
+  layernorm: true
+  metadata: null
+  normalize_input: true
+  scale_output: true
+  simple_fillna: false
+  use_drone: true
+  use_global: true
+  use_ld: true
+optimizer:
+  _target_: torch.optim.Adam
+  betas:
+  - 0.9
+  - 0.999
+  lr: 0.001
+  params: null
+  weight_decay: 0.0001
+scheduler:
+  _target_: torch.optim.lr_scheduler.LambdaLR
+  lr_lambda:
+    _target_: skytraffic.solver.WarmupMultiStepScaler
+    end: 20
+    gamma: 0.1
+    milestones:
+    - 0.7
+    - 0.85
+    start: 0
+    warmup: 2.0
+  optimizer: null
+train:
+  best_metric: null
+  checkpoint: ''
+  device: cuda
+  eval_period: 1
+  eval_train: false
+  grad_clip: 3.0
+  max_epoch: 20
+  output_dir: scratch/baseline_himsnet_1
+  save_period: 5
+  test_best_ckpt: false
+
+[11/25 17:52:32 default]: Loading 26 sample files for test split in parallel
+[11/25 17:52:33 default]: Loaded metadata from datasets/simbarca/metadata/simbarcamsmt.pkl, containing dict_keys(['adjacency', 'edge_index', 'cluster_id', 'grid_id', 'mean_and_std', 'input_seqs', 'output_seqs'])
+[11/25 17:52:35 default]: Number of edges in the graph: torch.Size([2, 100757])
+[11/25 17:52:46 default]: Evaluate model on pred_speed
+[11/25 17:52:46 default]: Evaluate model on test data at 1 time step
+[11/25 17:52:46 default]: MAE: 0.9055, MAPE: 0.2092, RMSE: 1.5040
+[11/25 17:52:46 default]: Evaluate model on test data at 2 time step
+[11/25 17:52:46 default]: MAE: 0.9699, MAPE: 0.2245, RMSE: 1.6185
+[11/25 17:52:46 default]: Evaluate model on test data at 3 time step
+[11/25 17:52:46 default]: MAE: 0.9849, MAPE: 0.2278, RMSE: 1.6474
+[11/25 17:52:46 default]: Evaluate model on test data at 4 time step
+[11/25 17:52:46 default]: MAE: 0.9948, MAPE: 0.2302, RMSE: 1.6661
+[11/25 17:52:46 default]: Evaluate model on test data at 5 time step
+[11/25 17:52:46 default]: MAE: 1.0047, MAPE: 0.2324, RMSE: 1.6832
+[11/25 17:52:46 default]: Evaluate model on test data at 6 time step
+[11/25 17:52:46 default]: MAE: 1.0162, MAPE: 0.2360, RMSE: 1.7026
+[11/25 17:52:46 default]: Evaluate model on test data at 7 time step
+[11/25 17:52:46 default]: MAE: 1.0379, MAPE: 0.2412, RMSE: 1.7378
+[11/25 17:52:46 default]: Evaluate model on test data at 8 time step
+[11/25 17:52:46 default]: MAE: 1.0736, MAPE: 0.2481, RMSE: 1.7925
+[11/25 17:52:47 default]: Evaluate model on test data at 9 time step
+[11/25 17:52:47 default]: MAE: 1.1183, MAPE: 0.2559, RMSE: 1.8627
+[11/25 17:52:47 default]: Evaluate model on test data at 10 time step
+[11/25 17:52:47 default]: MAE: 1.1637, MAPE: 0.2635, RMSE: 1.9340
+[11/25 17:52:47 default]: On average over different time steps
+[11/25 17:52:47 default]: MAE: 1.0261, MAPE: 0.2365, RMSE: 1.7175
+[11/25 17:52:47 default]: Evaluate model on pred_speed_regional
+[11/25 17:52:47 default]: Evaluate model on test data at 1 time step
+[11/25 17:52:47 default]: MAE: 0.1803, MAPE: 0.0553, RMSE: 0.2766
+[11/25 17:52:47 default]: Evaluate model on test data at 2 time step
+[11/25 17:52:47 default]: MAE: 0.1922, MAPE: 0.0602, RMSE: 0.2944
+[11/25 17:52:47 default]: Evaluate model on test data at 3 time step
+[11/25 17:52:47 default]: MAE: 0.1982, MAPE: 0.0635, RMSE: 0.3079
+[11/25 17:52:47 default]: Evaluate model on test data at 4 time step
+[11/25 17:52:47 default]: MAE: 0.2033, MAPE: 0.0665, RMSE: 0.3200
+[11/25 17:52:47 default]: Evaluate model on test data at 5 time step
+[11/25 17:52:47 default]: MAE: 0.2099, MAPE: 0.0695, RMSE: 0.3315
+[11/25 17:52:47 default]: Evaluate model on test data at 6 time step
+[11/25 17:52:47 default]: MAE: 0.2160, MAPE: 0.0727, RMSE: 0.3437
+[11/25 17:52:47 default]: Evaluate model on test data at 7 time step
+[11/25 17:52:47 default]: MAE: 0.2249, MAPE: 0.0771, RMSE: 0.3549
+[11/25 17:52:47 default]: Evaluate model on test data at 8 time step
+[11/25 17:52:47 default]: MAE: 0.2367, MAPE: 0.0823, RMSE: 0.3707
+[11/25 17:52:47 default]: Evaluate model on test data at 9 time step
+[11/25 17:52:47 default]: MAE: 0.2647, MAPE: 0.0928, RMSE: 0.4142
+[11/25 17:52:47 default]: Evaluate model on test data at 10 time step
+[11/25 17:52:47 default]: MAE: 0.3026, MAPE: 0.1073, RMSE: 0.4902
+[11/25 17:52:47 default]: On average over different time steps
+[11/25 17:52:47 default]: MAE: 0.2229, MAPE: 0.0745, RMSE: 0.3555
+[11/25 17:52:47 default]: Results to copy in manuscripts: 
+ METHOD & 1.00 & 23.2\% & 1.68 & 1.16 & 26.3\% & 1.93 & 0.21 & 7.0\% & 0.33 & 0.30 & 10.7\% & 0.49 \\ 
+
+[11/25 17:52:47 default]: Results to copy in excel: 
+ METHOD 1.00 23.2% 1.68 1.16 26.3% 1.93 0.21 7.0% 0.33 0.30 10.7% 0.49 
+
+[11/25 17:52:47 default]: Saved scores to scratch/baseline_himsnet_1/evaluation/final_evaluation_scores.json
+[11/25 17:52:47 default]: Saved the plot to scratch/baseline_himsnet_1/evaluation/average_mae_example.pdf
+[11/25 17:53:38 default]: Command Line Arguments: Namespace(config_file='scratch/baseline_himsnet_1/config.yaml', eval_only=True, resume=False, opts=['evaluation.visualize=True'])
+[11/25 17:53:38 default]: Start experiment with the following configurations: 
+ dataloader:
+  test:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 8
+    collate_fn: null
+    dataset:
+      _target_: skytraffic.data.datasets.SimBarcaMSMT
+      input_window: 30
+      pred_window: 30
+      sample_per_session: 20
+      split: test
+      step_size: 3
+    shuffle: false
+  train:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 8
+    collate_fn: null
+    dataset:
+      _target_: skytraffic.data.datasets.SimBarcaMSMT
+      input_window: 30
+      pred_window: 30
+      sample_per_session: 20
+      split: train
+      step_size: 3
+    shuffle: true
+dataset:
+  test:
+    _target_: skytraffic.data.datasets.SimBarcaMSMT
+    input_window: 30
+    pred_window: 30
+    sample_per_session: 20
+    split: test
+    step_size: 3
+  train:
+    _target_: skytraffic.data.datasets.SimBarcaMSMT
+    input_window: 30
+    pred_window: 30
+    sample_per_session: 20
+    split: train
+    step_size: 3
+evaluator:
+  _target_: skytraffic.evaluation.SimBarcaEvaluator
+  ignore_value: .nan
+  mape_threshold: 1.0
+  save_dir: ${train.output_dir}/evaluation
+model:
+  _target_: skytraffic.models.HiMSNet
+  adjacency_hop: 5
+  attn_agg: true
+  d_model: 64
+  global_downsample_factor: 1
+  layernorm: true
+  metadata: null
+  normalize_input: true
+  scale_output: true
+  simple_fillna: false
+  use_drone: true
+  use_global: true
+  use_ld: true
+optimizer:
+  _target_: torch.optim.Adam
+  betas:
+  - 0.9
+  - 0.999
+  lr: 0.001
+  params: null
+  weight_decay: 0.0001
+scheduler:
+  _target_: torch.optim.lr_scheduler.LambdaLR
+  lr_lambda:
+    _target_: skytraffic.solver.WarmupMultiStepScaler
+    end: 20
+    gamma: 0.1
+    milestones:
+    - 0.7
+    - 0.85
+    start: 0
+    warmup: 2.0
+  optimizer: null
+train:
+  best_metric: null
+  checkpoint: ''
+  device: cuda
+  eval_period: 1
+  eval_train: false
+  grad_clip: 3.0
+  max_epoch: 20
+  output_dir: scratch/baseline_himsnet_1
+  save_period: 5
+  test_best_ckpt: false
+
+[11/25 17:53:38 default]: Loading 26 sample files for test split in parallel
+[11/25 17:53:39 default]: Loaded metadata from datasets/simbarca/metadata/simbarcamsmt.pkl, containing dict_keys(['adjacency', 'edge_index', 'cluster_id', 'grid_id', 'mean_and_std', 'input_seqs', 'output_seqs'])
+[11/25 17:53:40 default]: Number of edges in the graph: torch.Size([2, 100757])
+[11/25 17:53:52 default]: Evaluate model on pred_speed
+[11/25 17:53:52 default]: Evaluate model on test data at 1 time step
+[11/25 17:53:52 default]: MAE: 0.9055, MAPE: 0.2092, RMSE: 1.5040
+[11/25 17:53:52 default]: Evaluate model on test data at 2 time step
+[11/25 17:53:52 default]: MAE: 0.9699, MAPE: 0.2245, RMSE: 1.6185
+[11/25 17:53:52 default]: Evaluate model on test data at 3 time step
+[11/25 17:53:52 default]: MAE: 0.9849, MAPE: 0.2278, RMSE: 1.6474
+[11/25 17:53:52 default]: Evaluate model on test data at 4 time step
+[11/25 17:53:52 default]: MAE: 0.9948, MAPE: 0.2302, RMSE: 1.6661
+[11/25 17:53:52 default]: Evaluate model on test data at 5 time step
+[11/25 17:53:52 default]: MAE: 1.0047, MAPE: 0.2324, RMSE: 1.6832
+[11/25 17:53:52 default]: Evaluate model on test data at 6 time step
+[11/25 17:53:52 default]: MAE: 1.0162, MAPE: 0.2360, RMSE: 1.7026
+[11/25 17:53:52 default]: Evaluate model on test data at 7 time step
+[11/25 17:53:52 default]: MAE: 1.0379, MAPE: 0.2412, RMSE: 1.7378
+[11/25 17:53:52 default]: Evaluate model on test data at 8 time step
+[11/25 17:53:52 default]: MAE: 1.0736, MAPE: 0.2481, RMSE: 1.7925
+[11/25 17:53:52 default]: Evaluate model on test data at 9 time step
+[11/25 17:53:52 default]: MAE: 1.1183, MAPE: 0.2559, RMSE: 1.8627
+[11/25 17:53:52 default]: Evaluate model on test data at 10 time step
+[11/25 17:53:52 default]: MAE: 1.1637, MAPE: 0.2635, RMSE: 1.9340
+[11/25 17:53:52 default]: On average over different time steps
+[11/25 17:53:52 default]: MAE: 1.0261, MAPE: 0.2365, RMSE: 1.7175
+[11/25 17:53:52 default]: Evaluate model on pred_speed_regional
+[11/25 17:53:52 default]: Evaluate model on test data at 1 time step
+[11/25 17:53:52 default]: MAE: 0.1803, MAPE: 0.0553, RMSE: 0.2766
+[11/25 17:53:52 default]: Evaluate model on test data at 2 time step
+[11/25 17:53:52 default]: MAE: 0.1922, MAPE: 0.0602, RMSE: 0.2944
+[11/25 17:53:52 default]: Evaluate model on test data at 3 time step
+[11/25 17:53:52 default]: MAE: 0.1982, MAPE: 0.0635, RMSE: 0.3079
+[11/25 17:53:52 default]: Evaluate model on test data at 4 time step
+[11/25 17:53:52 default]: MAE: 0.2033, MAPE: 0.0665, RMSE: 0.3200
+[11/25 17:53:52 default]: Evaluate model on test data at 5 time step
+[11/25 17:53:52 default]: MAE: 0.2099, MAPE: 0.0695, RMSE: 0.3315
+[11/25 17:53:52 default]: Evaluate model on test data at 6 time step
+[11/25 17:53:52 default]: MAE: 0.2160, MAPE: 0.0727, RMSE: 0.3437
+[11/25 17:53:52 default]: Evaluate model on test data at 7 time step
+[11/25 17:53:52 default]: MAE: 0.2249, MAPE: 0.0771, RMSE: 0.3549
+[11/25 17:53:52 default]: Evaluate model on test data at 8 time step
+[11/25 17:53:52 default]: MAE: 0.2367, MAPE: 0.0823, RMSE: 0.3707
+[11/25 17:53:52 default]: Evaluate model on test data at 9 time step
+[11/25 17:53:52 default]: MAE: 0.2647, MAPE: 0.0928, RMSE: 0.4142
+[11/25 17:53:52 default]: Evaluate model on test data at 10 time step
+[11/25 17:53:52 default]: MAE: 0.3026, MAPE: 0.1073, RMSE: 0.4902
+[11/25 17:53:52 default]: On average over different time steps
+[11/25 17:53:52 default]: MAE: 0.2229, MAPE: 0.0745, RMSE: 0.3555
+[11/25 17:53:52 default]: Results to copy in manuscripts: 
+ METHOD & 1.00 & 23.2\% & 1.68 & 1.16 & 26.3\% & 1.93 & 0.21 & 7.0\% & 0.33 & 0.30 & 10.7\% & 0.49 \\ 
+
+[11/25 17:53:52 default]: Results to copy in excel: 
+ METHOD 1.00 23.2% 1.68 1.16 26.3% 1.93 0.21 7.0% 0.33 0.30 10.7% 0.49 
+
+[11/25 17:53:52 default]: Saved scores to scratch/baseline_himsnet_1/evaluation/final_evaluation_scores.json
+[11/25 17:53:53 default]: Saved the plot to scratch/baseline_himsnet_1/evaluation/average_mae_example.pdf
+[11/25 17:53:53 default]: Save MAE by demand scale plot to scratch/baseline_himsnet_1/evaluation/MAE_by_demand_scale_pred_speed.pdf
+[11/25 17:53:53 default]: Save MAE by demand scale plot to scratch/baseline_himsnet_1/evaluation/MAE_by_demand_scale_pred_speed_regional.pdf
+[11/25 17:53:53 default]: Plotting predictions for sections of interest and regional predictions, check the plots in scratch/baseline_himsnet_1/evaluation/predictions

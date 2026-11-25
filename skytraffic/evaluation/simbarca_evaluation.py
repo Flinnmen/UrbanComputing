@@ -88,7 +88,7 @@ class SimBarcaEvaluator:
         
             # plot the boxplot
             fig, ax = plt.subplots()
-            ax.boxplot(error_by_scale.values(), labels=error_by_scale.keys())
+            ax.boxplot(error_by_scale.values(), tick_labels=error_by_scale.keys())
             ax.set_xlabel("Demand Scale")
             ax.set_ylabel("MAE")
             # ax.set_title("MAE by Demand Scale for {}".format(seq_name))
@@ -130,7 +130,7 @@ class SimBarcaEvaluator:
 
         # plot the boxplot
         fig, ax = plt.subplots()
-        ax.boxplot(mae_by_avg_spd.values(), labels=mae_by_avg_spd.keys())
+        ax.boxplot(mae_by_avg_spd.values(), tick_labels=mae_by_avg_spd.keys())
         ax.set_xlabel("Upper bound of average segment speed")
         ax.set_ylabel("MAE")
         # ax.set_title("MAE by Average Speed")

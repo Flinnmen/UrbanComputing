@@ -164,8 +164,11 @@ cython_debug/
 tests/*.pkl
 
 
-# for intermediate output
-/scratch
+# for intermediate output (ignore everything except logs and evaluation results)
+/scratch/*
+!/scratch/**/
+!/scratch/**/*.log
+!/scratch/**/evaluation/**
 # inactive files
 /storage
 # dataset files
