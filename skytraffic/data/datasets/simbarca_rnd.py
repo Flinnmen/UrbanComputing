@@ -82,7 +82,8 @@ class SimBarcaRandomObservation(SimBarcaMSMT):
             rng = np.random.default_rng(self.mask_seed)
             # exclude the locations with too many nan, (which means these roads have insufficient vehicles)
             # and then randomly select a few indexes of the road segments to have loop detectors
-            nan_by_location = np.mean(torch.isnan(self.ld_speed[..., 0]).numpy().astype(float), axis=(0, 1))
+            raw_ld = torch.as_tensor(self._ld_speed_3min, dtype=torch.float32) 
+            nan_by_location = torch.isnan(raw_ld).float().mean(dim=(0, 1)).numpy()  
             # maybe it's OK to have 10% nan values, then we have ~92% valid loop detectors
             valid_pos = np.nonzero(nan_by_location < 0.1)[0] 
             if self.ld_cvg >= 1.0:
@@ -96,7 +97,8 @@ class SimBarcaRandomObservation(SimBarcaMSMT):
                 ld_pos = rng.choice(valid_pos, size=int(self.ld_cvg * self.adjacency.shape[0]), replace=False)
                 ld_mask = np.zeros(shape=self.adjacency.shape[0], dtype=bool)
                 ld_mask[ld_pos] = True
-            
+                
+            os.makedirs(os.path.dirname(self.ld_mask_file), exist_ok=True)
             with open(self.ld_mask_file, "wb") as f:
                 pickle.dump(ld_mask, f)
 
@@ -126,6 +128,7 @@ class SimBarcaRandomObservation(SimBarcaMSMT):
                 drone_flight_masks.append(drone_mask)
             drone_flight_masks = np.stack(drone_flight_masks, axis=0)
 
+            os.makedirs(os.path.dirname(self.drone_mask_file), exist_ok=True)
             with open(self.drone_mask_file, "wb") as f:
                 pickle.dump(drone_flight_masks, f)
         
