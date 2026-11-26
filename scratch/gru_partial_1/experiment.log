@@ -1,0 +1,326 @@
+[11/26 16:08:51 default]: Command Line Arguments: Namespace(config_file='config/himsnet/HiMSNet_RND.py', eval_only=False, resume=False, opts=['train.output_dir=scratch/gru_partial_1'])
+[11/26 16:08:51 default]: Config saved to scratch/gru_partial_1/config.yaml
+[11/26 16:08:51 default]: Start experiment with the following configurations: 
+ dataloader:
+  test:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 8
+    collate_fn: null
+    dataset:
+      _target_: skytraffic.data.datasets.SimBarcaRandomObservation
+      drone_cvg: 0.1
+      drone_noise: 0.05
+      input_window: 30
+      ld_cvg: 0.1
+      ld_noise: 0.15
+      mask_seed: 42
+      noise_seed: 114514
+      pred_window: 30
+      reinit_pos: false
+      sample_per_session: 20
+      split: test
+      step_size: 3
+      use_clean_data: false
+    shuffle: false
+  train:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 8
+    collate_fn: null
+    dataset:
+      _target_: skytraffic.data.datasets.SimBarcaRandomObservation
+      drone_cvg: 0.1
+      drone_noise: 0.05
+      input_window: 30
+      ld_cvg: 0.1
+      ld_noise: 0.15
+      mask_seed: 42
+      noise_seed: 114514
+      pred_window: 30
+      reinit_pos: false
+      sample_per_session: 20
+      split: train
+      step_size: 3
+      use_clean_data: false
+    shuffle: true
+dataset:
+  test:
+    _target_: skytraffic.data.datasets.SimBarcaRandomObservation
+    drone_cvg: 0.1
+    drone_noise: 0.05
+    input_window: 30
+    ld_cvg: 0.1
+    ld_noise: 0.15
+    mask_seed: 42
+    noise_seed: 114514
+    pred_window: 30
+    reinit_pos: false
+    sample_per_session: 20
+    split: test
+    step_size: 3
+    use_clean_data: false
+  train:
+    _target_: skytraffic.data.datasets.SimBarcaRandomObservation
+    drone_cvg: 0.1
+    drone_noise: 0.05
+    input_window: 30
+    ld_cvg: 0.1
+    ld_noise: 0.15
+    mask_seed: 42
+    noise_seed: 114514
+    pred_window: 30
+    reinit_pos: false
+    sample_per_session: 20
+    split: train
+    step_size: 3
+    use_clean_data: false
+evaluator:
+  _target_: skytraffic.evaluation.SimBarcaEvaluator
+  ignore_value: .nan
+  mape_threshold: 1.0
+  save_dir: ${train.output_dir}/evaluation
+model:
+  _target_: skytraffic.models.HiMSNet
+  adjacency_hop: 5
+  attn_agg: true
+  d_model: 64
+  global_downsample_factor: 1
+  layernorm: true
+  metadata: null
+  normalize_input: true
+  scale_output: true
+  simple_fillna: false
+  use_drone: true
+  use_global: true
+  use_ld: true
+optimizer:
+  _target_: torch.optim.Adam
+  betas:
+  - 0.9
+  - 0.999
+  lr: 0.001
+  params: null
+  weight_decay: 0.0001
+scheduler:
+  _target_: torch.optim.lr_scheduler.LambdaLR
+  lr_lambda:
+    _target_: skytraffic.solver.WarmupMultiStepScaler
+    end: 20
+    gamma: 0.1
+    milestones:
+    - 0.7
+    - 0.85
+    start: 0
+    warmup: 2.0
+  optimizer: null
+train:
+  best_metric: null
+  checkpoint: ''
+  device: cuda
+  eval_period: 1
+  eval_train: false
+  grad_clip: 3.0
+  max_epoch: 20
+  output_dir: scratch/gru_partial_1
+  save_period: 5
+  test_best_ckpt: false
+
+[11/26 16:08:51 default]: Loading 75 sample files for train split in parallel
+[11/26 16:08:54 default]: Loading loop detector mask from file
+[11/26 16:08:54 default]: Loading drone mask from file
+[11/26 16:08:55 default]: Adding noise to input speed data using random seed 114514
+[11/26 16:08:56 default]: Using partially observable data for training
+[11/26 16:08:56 default]: Adding noise to labels using random seed 114514
+[11/26 16:08:56 default]: Loaded metadata from datasets/simbarca/metadata/simbarcarandomobservation.pkl, containing dict_keys(['adjacency', 'edge_index', 'cluster_id', 'grid_id', 'mean_and_std', 'input_seqs', 'output_seqs'])
+[11/26 16:08:56 default]: Loading 26 sample files for test split in parallel
+[11/26 16:08:57 default]: Loading loop detector mask from file
+[11/26 16:08:57 default]: Loading drone mask from file
+[11/26 16:08:57 default]: Adding noise to input speed data using random seed 114514
+[11/26 16:08:57 default]: Using clean, noise-free, full-information labels for evaluation
+[11/26 16:08:57 default]: Loaded metadata from datasets/simbarca/metadata/simbarcarandomobservation.pkl, containing dict_keys(['adjacency', 'edge_index', 'cluster_id', 'grid_id', 'mean_and_std', 'input_seqs', 'output_seqs'])
+[11/26 16:08:57 default]: Number of edges in the graph: torch.Size([2, 100757])
+[11/26 16:08:58 default]: Checkpoint does not exist, train from scratch instead. Given Path: None
+[11/26 16:08:58 default]: start training...
+[11/26 16:08:58 default]: The model structure 
+ HiMSNet(
+  (spatial_encoding): LearnedPositionalEncoding(
+    d_model=64, max_len=1570, init_method='rand'
+    (dropout): Dropout(p=0.1, inplace=False)
+  )
+  (drone_embedding): ValueEmbedding(d_model=64)
+  (temporal_encoding_drone): LearnedPositionalEncoding(
+    d_model=64, max_len=500, init_method='rand'
+    (dropout): Dropout(p=0.1, inplace=False)
+  )
+  (drone_t_patching_1): Conv1d(64, 64, kernel_size=(3,), stride=(3,))
+  (drone_t_patching_2): Conv1d(64, 64, kernel_size=(3,), stride=(3,))
+  (drone_temporal): GRU(64, 64, num_layers=3, batch_first=True)
+  (drone_norm): LayerNorm((64,), eps=1e-05, elementwise_affine=True)
+  (ld_embedding): ValueEmbedding(d_model=64)
+  (temporal_encoding_ld): LearnedPositionalEncoding(
+    d_model=64, max_len=500, init_method='rand'
+    (dropout): Dropout(p=0.1, inplace=False)
+  )
+  (ld_temporal): GRU(64, 64, num_layers=3, batch_first=True)
+  (ld_norm): LayerNorm((64,), eps=1e-05, elementwise_affine=True)
+  (channel_down_sample): LazyLinear(in_features=0, out_features=64, bias=True)
+  (dropout_glb): Dropout(p=0.1, inplace=False)
+  (relu): ReLU()
+  (gcn_1): GCNConv(64, 64)
+  (gcn_2): GCNConv(64, 64)
+  (gcn_3): GCNConv(64, 64)
+  (global_norm1): LayerNorm((64,), eps=1e-05, elementwise_affine=True)
+  (global_norm2): LayerNorm((64,), eps=1e-05, elementwise_affine=True)
+  (channel_up_sample): Linear(in_features=64, out_features=64, bias=True)
+  (feature_aggregator): MultiHeadAttention(
+    (w_qs): Linear(in_features=192, out_features=192, bias=False)
+    (w_ks): Linear(in_features=192, out_features=192, bias=False)
+    (w_vs): Linear(in_features=192, out_features=192, bias=False)
+    (fc): Linear(in_features=192, out_features=192, bias=False)
+    (attention): ScaledDotProductAttention(
+      (dropout): Dropout(p=0.1, inplace=False)
+    )
+    (dropout): Dropout(p=0.1, inplace=False)
+    (layer_norm): LayerNorm((192,), eps=1e-06, elementwise_affine=True)
+  )
+  (prediction): MLP(
+    (layers): ModuleList()
+    (dropout): Dropout(p=0.1, inplace=False)
+    (linear1): Linear(in_features=192, out_features=128, bias=True)
+    (norm1): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+    (linear2): Linear(in_features=128, out_features=10, bias=True)
+  )
+  (prediction_regional): MLP(
+    (layers): ModuleList()
+    (dropout): Dropout(p=0.1, inplace=False)
+    (linear1): Linear(in_features=192, out_features=128, bias=True)
+    (norm1): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+    (linear2): Linear(in_features=128, out_features=10, bias=True)
+  )
+  (loss): GeneralizedProbRegLoss(aleatoric=False, exponent=1, alpha=1.0, ignore_value=nan)
+)
+[11/26 16:13:46 default]: Evaluation Metrics (test): pred_speed_mae: 1.9391  pred_speed_mape: 0.4541  pred_speed_rmse: 2.5968  pred_speed_regional_mae: 0.7502  pred_speed_regional_mape: 0.2572  pred_speed_regional_rmse: 1.0236
+[11/26 16:13:46 default]: Epoch: 000, Training Time: 274.4410 secs Inference Time: 14.2618 secs
+[11/26 16:13:46 default]: Training Losses: loss 2.4241  loss_regional 1.0721
+[11/26 16:18:34 default]: Evaluation Metrics (test): pred_speed_mae: 1.5124  pred_speed_mape: 0.3807  pred_speed_rmse: 2.1878  pred_speed_regional_mae: 0.5635  pred_speed_regional_mape: 0.1803  pred_speed_regional_rmse: 0.7968
+[11/26 16:18:34 default]: Epoch: 001, Training Time: 277.0292 secs Inference Time: 10.8492 secs
+[11/26 16:18:34 default]: Training Losses: loss 1.8553  loss_regional 0.9434
+[11/26 16:23:22 default]: Evaluation Metrics (test): pred_speed_mae: 1.2361  pred_speed_mape: 0.2887  pred_speed_rmse: 1.9866  pred_speed_regional_mae: 0.6314  pred_speed_regional_mape: 0.2141  pred_speed_regional_rmse: 0.8609
+[11/26 16:23:22 default]: Epoch: 002, Training Time: 276.3230 secs Inference Time: 11.0856 secs
+[11/26 16:23:22 default]: Training Losses: loss 1.4622  loss_regional 0.9082
+[11/26 16:28:00 default]: Evaluation Metrics (test): pred_speed_mae: 1.2070  pred_speed_mape: 0.2866  pred_speed_rmse: 1.9212  pred_speed_regional_mae: 0.5109  pred_speed_regional_mape: 0.1632  pred_speed_regional_rmse: 0.6850
+[11/26 16:28:00 default]: Epoch: 003, Training Time: 267.9423 secs Inference Time: 10.1718 secs
+[11/26 16:28:00 default]: Training Losses: loss 1.2950  loss_regional 0.8402
+[11/26 16:32:31 default]: Evaluation Metrics (test): pred_speed_mae: 1.1706  pred_speed_mape: 0.2717  pred_speed_rmse: 1.9016  pred_speed_regional_mae: 0.4736  pred_speed_regional_mape: 0.1573  pred_speed_regional_rmse: 0.6722
+[11/26 16:32:31 default]: Epoch: 004, Training Time: 261.4566 secs Inference Time: 10.2510 secs
+[11/26 16:32:31 default]: Training Losses: loss 1.2655  loss_regional 0.8069
+[11/26 16:37:04 default]: Evaluation Metrics (test): pred_speed_mae: 1.1541  pred_speed_mape: 0.2661  pred_speed_rmse: 1.8566  pred_speed_regional_mae: 0.4508  pred_speed_regional_mape: 0.1449  pred_speed_regional_rmse: 0.6280
+[11/26 16:37:04 default]: Epoch: 005, Training Time: 261.7373 secs Inference Time: 10.3839 secs
+[11/26 16:37:04 default]: Training Losses: loss 1.2248  loss_regional 0.7778
+[11/26 16:37:04 default]: Epoch: 005, Checkpoint saved to scratch/gru_partial_1/himsnet_epoch_5.pth
+[11/26 16:41:34 default]: Evaluation Metrics (test): pred_speed_mae: 1.1884  pred_speed_mape: 0.2582  pred_speed_rmse: 1.8926  pred_speed_regional_mae: 0.3908  pred_speed_regional_mape: 0.1203  pred_speed_regional_rmse: 0.5460
+[11/26 16:41:34 default]: Epoch: 006, Training Time: 260.1142 secs Inference Time: 9.9938 secs
+[11/26 16:41:34 default]: Training Losses: loss 1.2144  loss_regional 0.7680
+[11/26 16:46:15 default]: Evaluation Metrics (test): pred_speed_mae: 1.1339  pred_speed_mape: 0.2636  pred_speed_rmse: 1.7976  pred_speed_regional_mae: 0.4533  pred_speed_regional_mape: 0.1539  pred_speed_regional_rmse: 0.6298
+[11/26 16:46:15 default]: Epoch: 007, Training Time: 269.2609 secs Inference Time: 12.0270 secs
+[11/26 16:46:15 default]: Training Losses: loss 1.2085  loss_regional 0.7689
+[11/26 16:51:01 default]: Evaluation Metrics (test): pred_speed_mae: 1.1130  pred_speed_mape: 0.2511  pred_speed_rmse: 1.8123  pred_speed_regional_mae: 0.4174  pred_speed_regional_mape: 0.1394  pred_speed_regional_rmse: 0.5973
+[11/26 16:51:01 default]: Epoch: 008, Training Time: 273.4691 secs Inference Time: 12.6024 secs
+[11/26 16:51:01 default]: Training Losses: loss 1.1782  loss_regional 0.7554
+[11/26 16:56:08 default]: Evaluation Metrics (test): pred_speed_mae: 1.1157  pred_speed_mape: 0.2526  pred_speed_rmse: 1.7967  pred_speed_regional_mae: 0.3876  pred_speed_regional_mape: 0.1222  pred_speed_regional_rmse: 0.5443
+[11/26 16:56:08 default]: Epoch: 009, Training Time: 285.9459 secs Inference Time: 21.0945 secs
+[11/26 16:56:08 default]: Training Losses: loss 1.1689  loss_regional 0.7514
+[11/26 17:01:31 default]: Evaluation Metrics (test): pred_speed_mae: 1.1336  pred_speed_mape: 0.2555  pred_speed_rmse: 1.8090  pred_speed_regional_mae: 0.3687  pred_speed_regional_mape: 0.1208  pred_speed_regional_rmse: 0.5334
+[11/26 17:01:31 default]: Epoch: 010, Training Time: 298.3975 secs Inference Time: 24.2770 secs
+[11/26 17:01:31 default]: Training Losses: loss 1.1692  loss_regional 0.7464
+[11/26 17:01:31 default]: Epoch: 010, Checkpoint saved to scratch/gru_partial_1/himsnet_epoch_10.pth
+[11/26 17:07:02 default]: Evaluation Metrics (test): pred_speed_mae: 1.1135  pred_speed_mape: 0.2482  pred_speed_rmse: 1.7996  pred_speed_regional_mae: 0.3604  pred_speed_regional_mape: 0.1233  pred_speed_regional_rmse: 0.5336
+[11/26 17:07:02 default]: Epoch: 011, Training Time: 305.8685 secs Inference Time: 25.3038 secs
+[11/26 17:07:02 default]: Training Losses: loss 1.1573  loss_regional 0.7421
+[11/26 17:12:32 default]: Evaluation Metrics (test): pred_speed_mae: 1.1001  pred_speed_mape: 0.2548  pred_speed_rmse: 1.7930  pred_speed_regional_mae: 0.3527  pred_speed_regional_mape: 0.1190  pred_speed_regional_rmse: 0.5229
+[11/26 17:12:32 default]: Epoch: 012, Training Time: 305.5889 secs Inference Time: 24.4876 secs
+[11/26 17:12:32 default]: Training Losses: loss 1.1575  loss_regional 0.7362
+[11/26 17:17:54 default]: Evaluation Metrics (test): pred_speed_mae: 1.1032  pred_speed_mape: 0.2534  pred_speed_rmse: 1.8116  pred_speed_regional_mae: 0.4113  pred_speed_regional_mape: 0.1343  pred_speed_regional_rmse: 0.5727
+[11/26 17:17:54 default]: Epoch: 013, Training Time: 296.4693 secs Inference Time: 25.9917 secs
+[11/26 17:17:54 default]: Training Losses: loss 1.1503  loss_regional 0.7323
+[11/26 17:23:11 default]: Evaluation Metrics (test): pred_speed_mae: 1.0900  pred_speed_mape: 0.2488  pred_speed_rmse: 1.7912  pred_speed_regional_mae: 0.3613  pred_speed_regional_mape: 0.1213  pred_speed_regional_rmse: 0.5327
+[11/26 17:23:11 default]: Epoch: 014, Training Time: 292.5957 secs Inference Time: 24.0947 secs
+[11/26 17:23:11 default]: Training Losses: loss 1.1329  loss_regional 0.7164
+[11/26 17:28:23 default]: Evaluation Metrics (test): pred_speed_mae: 1.0895  pred_speed_mape: 0.2533  pred_speed_rmse: 1.7911  pred_speed_regional_mae: 0.3680  pred_speed_regional_mape: 0.1242  pred_speed_regional_rmse: 0.5406
+[11/26 17:28:23 default]: Epoch: 015, Training Time: 286.4708 secs Inference Time: 24.9243 secs
+[11/26 17:28:23 default]: Training Losses: loss 1.1302  loss_regional 0.7112
+[11/26 17:28:23 default]: Epoch: 015, Checkpoint saved to scratch/gru_partial_1/himsnet_epoch_15.pth
+[11/26 17:33:34 default]: Evaluation Metrics (test): pred_speed_mae: 1.0887  pred_speed_mape: 0.2519  pred_speed_rmse: 1.7920  pred_speed_regional_mae: 0.3461  pred_speed_regional_mape: 0.1167  pred_speed_regional_rmse: 0.5127
+[11/26 17:33:34 default]: Epoch: 016, Training Time: 287.7586 secs Inference Time: 23.3094 secs
+[11/26 17:33:34 default]: Training Losses: loss 1.1290  loss_regional 0.7102
+[11/26 17:38:39 default]: Evaluation Metrics (test): pred_speed_mae: 1.0876  pred_speed_mape: 0.2495  pred_speed_rmse: 1.7879  pred_speed_regional_mae: 0.3533  pred_speed_regional_mape: 0.1189  pred_speed_regional_rmse: 0.5213
+[11/26 17:38:39 default]: Epoch: 017, Training Time: 281.2859 secs Inference Time: 23.5844 secs
+[11/26 17:38:39 default]: Training Losses: loss 1.1269  loss_regional 0.7072
+[11/26 17:44:09 default]: Evaluation Metrics (test): pred_speed_mae: 1.0879  pred_speed_mape: 0.2490  pred_speed_rmse: 1.7891  pred_speed_regional_mae: 0.3481  pred_speed_regional_mape: 0.1171  pred_speed_regional_rmse: 0.5157
+[11/26 17:44:09 default]: Epoch: 018, Training Time: 304.9221 secs Inference Time: 25.2995 secs
+[11/26 17:44:09 default]: Training Losses: loss 1.1269  loss_regional 0.7070
+[11/26 17:49:19 default]: Evaluation Metrics (test): pred_speed_mae: 1.0878  pred_speed_mape: 0.2499  pred_speed_rmse: 1.7899  pred_speed_regional_mae: 0.3477  pred_speed_regional_mape: 0.1169  pred_speed_regional_rmse: 0.5149
+[11/26 17:49:19 default]: Epoch: 019, Training Time: 287.6397 secs Inference Time: 23.7043 secs
+[11/26 17:49:19 default]: Training Losses: loss 1.1267  loss_regional 0.7063
+[11/26 17:49:19 default]: Training finished
+[11/26 17:49:19 default]: Average Training Time: 282.7358 secs/epoch
+[11/26 17:49:19 default]: Average Inference Time: 18.3849 secs/epoch
+[11/26 17:49:19 default]: The best achieved validation loss is inf
+[11/26 17:49:19 default]: Epoch: 019, Checkpoint saved to scratch/gru_partial_1/himsnet_epoch_19.pth
+[11/26 17:49:19 default]: Copying the final model to scratch/gru_partial_1/model_final.pth
+[11/26 17:49:41 default]: Evaluate model on pred_speed
+[11/26 17:49:41 default]: Evaluate model on test data at 1 time step
+[11/26 17:49:41 default]: MAE: 1.0285, MAPE: 0.2344, RMSE: 1.6942
+[11/26 17:49:41 default]: Evaluate model on test data at 2 time step
+[11/26 17:49:41 default]: MAE: 1.0376, MAPE: 0.2376, RMSE: 1.7093
+[11/26 17:49:41 default]: Evaluate model on test data at 3 time step
+[11/26 17:49:41 default]: MAE: 1.0435, MAPE: 0.2398, RMSE: 1.7203
+[11/26 17:49:41 default]: Evaluate model on test data at 4 time step
+[11/26 17:49:41 default]: MAE: 1.0510, MAPE: 0.2427, RMSE: 1.7328
+[11/26 17:49:42 default]: Evaluate model on test data at 5 time step
+[11/26 17:49:42 default]: MAE: 1.0601, MAPE: 0.2452, RMSE: 1.7480
+[11/26 17:49:42 default]: Evaluate model on test data at 6 time step
+[11/26 17:49:42 default]: MAE: 1.0697, MAPE: 0.2478, RMSE: 1.7640
+[11/26 17:49:42 default]: Evaluate model on test data at 7 time step
+[11/26 17:49:42 default]: MAE: 1.0895, MAPE: 0.2526, RMSE: 1.7941
+[11/26 17:49:42 default]: Evaluate model on test data at 8 time step
+[11/26 17:49:42 default]: MAE: 1.1232, MAPE: 0.2592, RMSE: 1.8453
+[11/26 17:49:42 default]: Evaluate model on test data at 9 time step
+[11/26 17:49:42 default]: MAE: 1.1658, MAPE: 0.2666, RMSE: 1.9122
+[11/26 17:49:42 default]: Evaluate model on test data at 10 time step
+[11/26 17:49:42 default]: MAE: 1.2088, MAPE: 0.2732, RMSE: 1.9788
+[11/26 17:49:42 default]: On average over different time steps
+[11/26 17:49:42 default]: MAE: 1.0870, MAPE: 0.2496, RMSE: 1.7910
+[11/26 17:49:42 default]: Evaluate model on pred_speed_regional
+[11/26 17:49:42 default]: Evaluate model on test data at 1 time step
+[11/26 17:49:42 default]: MAE: 0.3018, MAPE: 0.0934, RMSE: 0.4368
+[11/26 17:49:42 default]: Evaluate model on test data at 2 time step
+[11/26 17:49:42 default]: MAE: 0.3085, MAPE: 0.0971, RMSE: 0.4502
+[11/26 17:49:42 default]: Evaluate model on test data at 3 time step
+[11/26 17:49:42 default]: MAE: 0.3174, MAPE: 0.1015, RMSE: 0.4659
+[11/26 17:49:42 default]: Evaluate model on test data at 4 time step
+[11/26 17:49:42 default]: MAE: 0.3244, MAPE: 0.1055, RMSE: 0.4767
+[11/26 17:49:42 default]: Evaluate model on test data at 5 time step
+[11/26 17:49:42 default]: MAE: 0.3333, MAPE: 0.1102, RMSE: 0.4930
+[11/26 17:49:42 default]: Evaluate model on test data at 6 time step
+[11/26 17:49:42 default]: MAE: 0.3422, MAPE: 0.1150, RMSE: 0.5086
+[11/26 17:49:42 default]: Evaluate model on test data at 7 time step
+[11/26 17:49:42 default]: MAE: 0.3537, MAPE: 0.1212, RMSE: 0.5287
+[11/26 17:49:42 default]: Evaluate model on test data at 8 time step
+[11/26 17:49:42 default]: MAE: 0.3668, MAPE: 0.1285, RMSE: 0.5469
+[11/26 17:49:42 default]: Evaluate model on test data at 9 time step
+[11/26 17:49:42 default]: MAE: 0.3967, MAPE: 0.1405, RMSE: 0.5889
+[11/26 17:49:42 default]: Evaluate model on test data at 10 time step
+[11/26 17:49:42 default]: MAE: 0.4324, MAPE: 0.1559, RMSE: 0.6533
+[11/26 17:49:42 default]: On average over different time steps
+[11/26 17:49:42 default]: MAE: 0.3477, MAPE: 0.1166, RMSE: 0.5188
+[11/26 17:49:42 default]: Results to copy in manuscripts: 
+ METHOD & 1.06 & 24.5\% & 1.75 & 1.21 & 27.3\% & 1.98 & 0.33 & 11.0\% & 0.49 & 0.43 & 15.6\% & 0.65 \\ 
+
+[11/26 17:49:42 default]: Results to copy in excel: 
+ METHOD 1.06 24.5% 1.75 1.21 27.3% 1.98 0.33 11.0% 0.49 0.43 15.6% 0.65 
+
+[11/26 17:49:42 default]: Saved scores to scratch/gru_partial_1/evaluation/final_evaluation_scores.json
+[11/26 17:49:42 default]: Saved the plot to scratch/gru_partial_1/evaluation/average_mae_example.pdf
+[11/26 17:49:42 default]: Save MAE by demand scale plot to scratch/gru_partial_1/evaluation/MAE_by_demand_scale_pred_speed.pdf
+[11/26 17:49:42 default]: Save MAE by demand scale plot to scratch/gru_partial_1/evaluation/MAE_by_demand_scale_pred_speed_regional.pdf
+[11/26 17:49:43 default]: Plotting predictions for sections of interest and regional predictions, check the plots in scratch/gru_partial_1/evaluation/predictions

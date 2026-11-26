@@ -67,13 +67,15 @@ class HiMSNet(nn.Module):
             # drone data has higher temporal resolution, so we use two conv layers to down sample
             self.drone_t_patching_1 = nn.Conv1d(in_channels=d_model, out_channels=d_model, kernel_size=3, stride=3)
             self.drone_t_patching_2 = nn.Conv1d(in_channels=d_model, out_channels=d_model, kernel_size=3, stride=3)
-            self.drone_temporal = nn.LSTM(input_size=d_model, hidden_size=d_model, num_layers=3, batch_first=True)
+            self.drone_temporal = nn.LSTM(input_size=d_model, hidden_size=d_model, num_layers=3, batch_first=True) #Uncomment for LSTM
+            #self.drone_temporal = nn.GRU(input_size=d_model, hidden_size=d_model, num_layers=3, batch_first=True) #Uncomment for GRU
             self.drone_norm = nn.LayerNorm(d_model) if layernorm else nn.Identity()
             
         if self.use_ld:
             self.ld_embedding = ValueEmbedding(d_model=d_model, assume_clean_input=self.simple_fillna)
             self.temporal_encoding_ld = LearnedPositionalEncoding(d_model=d_model, dropout=dropout)
-            self.ld_temporal = nn.LSTM(input_size=d_model, hidden_size=d_model, num_layers=3, batch_first=True)
+            self.ld_temporal = nn.LSTM(input_size=d_model, hidden_size=d_model, num_layers=3, batch_first=True) #Uncomment for LSTM
+            #self.ld_temporal = nn.GRU(input_size=d_model, hidden_size=d_model, num_layers=3, batch_first=True) #Uncomment for GRU
             self.ld_norm = nn.LayerNorm(d_model) if layernorm else nn.Identity()
 
         if self.use_global:

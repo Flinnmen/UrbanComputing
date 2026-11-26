@@ -165,10 +165,12 @@ tests/*.pkl
 
 
 # for intermediate output (ignore everything except logs and evaluation results)
-/scratch/*
+# for intermediate output (ignore everything except logs, evaluation results, and the final model)
+/scratch/**
 !/scratch/**/
 !/scratch/**/*.log
 !/scratch/**/evaluation/**
+!/scratch/**/model_final.pth
 # inactive files
 /storage
 # dataset files
